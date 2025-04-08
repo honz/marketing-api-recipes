@@ -1,0 +1,4 @@
+campaign_name,country,age_min,age_max,gender,page_id,daily_budget,pixel_id,conversion_domain,image_hash,product_link,message
+Summer Sale 2024,US,18,65,1,123456789,100,YOUR_PIXEL_ID,your-domain.com,YOUR_IMAGE_HASH,https://your-product-page.com,Shop our summer collection!
+Back to School,US,13,25,2,123456789,150,YOUR_PIXEL_ID,your-domain.com,YOUR_IMAGE_HASH,https://your-product-page.com,Get ready for school with our latest styles!
+Holiday Special,US,25,65,1,123456789,200,YOUR_PIXEL_ID,your-domain.com,YOUR_IMAGE_HASH,https://your-product-page.com,Holiday shopping made easy! 

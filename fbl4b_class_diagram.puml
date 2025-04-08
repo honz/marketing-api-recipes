@@ -1,0 +1,46 @@
+@startuml FBL4B Class Diagram
+
+class AuthHandler {
+    - do_GET()
+    - handle_callback()
+    - exchange_code_for_token()
+}
+
+class FacebookSession {
+    - app_id: string
+    - app_secret: string
+    - access_token: string
+    + __init__()
+}
+
+class FacebookAdsApi {
+    - session: FacebookSession
+    + init()
+    + set_default_api()
+}
+
+class User {
+    - fbid: string
+    + api_get()
+    + get_ad_accounts()
+}
+
+class AdAccount {
+    - id: string
+    + api_get()
+}
+
+class Main {
+    - REDIRECT_URI: string
+    - CONFIG_ID: string
+    + main()
+}
+
+Main --> AuthHandler: creates
+AuthHandler --> FacebookSession: creates
+AuthHandler --> FacebookAdsApi: uses
+AuthHandler --> User: creates
+AuthHandler --> AdAccount: creates
+User --> AdAccount: gets
+
+@enduml 

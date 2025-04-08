@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marketing API Example - Create and Publish Ad</title>
+    <style>
+        .form-container {
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            cursor: pointer;
+            position: relative;
+        }
+        button.loading {
+            opacity: 0.7;
+            cursor: wait;
+        }
+        .preview-section {
+            margin-top: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+        @keyframes spin {
+            to {transform: rotate(360deg);}
+        }
+    </style>
+</head>
+<body>
+    <div class="form-container">
+        <div id="statusMessage" style="margin-bottom: 20px; padding: 10px; display: none;"></div>
+        <h1>Create New Advertisement</h1>
+        <form id="adForm">
+            <div class="form-group">
+                <label for="adName">Ad Name:</label>
+                <input type="text" id="adName" name="adName" required oninput="updatePreview()">
+            </div>
+            <div class="form-group">
+                <label for="adDescription">Ad Description:</label>
+                <textarea id="adDescription" name="adDescription" rows="4" required oninput="updatePreview()"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="targetAudience">Target Audience:</label>
+                <input type="text" id="targetAudience" name="targetAudience" required oninput="updatePreview()">
+            </div>
+            <div class="form-group">
+                <label for="budget">Budget:</label>
+                <input type="number" id="budget" name="budget" min="0" step="0.01" required oninput="updatePreview()">
+            </div>
+            <div class="form-group">
+                <label for="duration">Campaign Duration (days):</label>
+                <input type="number" id="duration" name="duration" min="1" required oninput="updatePreview()">
+            </div>
+            <button type="submit" id="submitButton">Create Advertisement</button>
+        </form>
+
+        <div class="preview-section">
+            <h2>Live Preview</h2>
+            <div id="previewContent">
+                <h3 id="previewName"></h3>
+                <p id="previewDescription"></p>
+                <p>Target Audience: <span id="previewAudience"></span></p>
+                <p>Budget: <span id="previewBudget"></span></p>
+                <p>Duration: <span id="previewDuration"></span> days</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://marketing-api-sdk.example.com/sdk.js"></script>
+    <script>
+        // Helper function to manage loading state
+        function setLoading(isLoading) {
+            const button = document.getElementById('submitButton');
+            if (isLoading) {
+                button.classList.add('loading');
+                button.innerHTML = 'Processing... <span class="spinner"></span>';
+                button.disabled = true;
+            } else {
+                button.classList.remove('loading');
+                button.innerHTML = 'Create Advertisement';
+                button.disabled = false;
+            }
+        }
+
+        // Helper functions
+        /**
+         * Formats a number as USD currency
+         * @param {number} amount - The amount to format
+         * @returns {string} The formatted currency string
+         */
+        function formatCurrency(amount) {
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD'
+            }).format(amount);
+        }
+
+        /**
+         * Updates the preview section with current form values
+         * Validates numeric inputs and handles invalid values
+         */
+        function updatePreview() {
+            document.getElementById('previewName').textContent = document.getElementById('adName').value;
+            document.getElementById('previewDescription').textContent = document.getElementById('adDescription').value;
+            document.getElementById('previewAudience').textContent = document.getElementById('targetAudience').value;
+
+            const budget = parseFloat(document.getElementById('budget').value);
+            const duration = parseInt(document.getElementById('duration').value);
+
+            document.getElementById('previewBudget').textContent = !isNaN(budget) ? formatCurrency(budget) : 'Invalid amount';
+            document.getElementById('previewDuration').textContent = !isNaN(duration) ? duration : 'Invalid duration';
+        }
+
+        /**
+         * Marketing API initialization
+         * Initializes the SDK with API credentials and configures the environment
+         * Must be called before any other API operations can be performed
+         * Throws an error if initialization fails
+         */
+        async function initMarketingAPI() {
+            try {
+                await MarketingAPI.init({
+                    apiKey: 'YOUR_API_KEY',
+                    environment: 'production'
+                });
+            } catch (error) {
+                throw new Error('Failed to initialize Marketing API: ' + error.message);
+            }
+        }
+
+        // Create advertisement
+        /**
+         * Creates a new advertisement using the Marketing API
+         * @param {Object} adData - The advertisement data
+         * @param {string} adData.name - Advertisement name
+         * @param {string} adData.description - Advertisement description
+         * @param {string} adData.targetAudience - Target audience
+         * @param {number} adData.budget - Advertisement budget
+         * @param {number} adData.duration - Campaign duration in days
+         * @returns {Promise<string>} The created advertisement ID
+         * @throws {Error} If creation fails
+         */
+        async function createAd(adData) {
+            try {
+                const response = await MarketingAPI.ads.create(adData);
+                return response.adId;
+            } catch (error) {
+                throw new Error('Failed to create advertisement: ' + error.message);
+            }
+        }
+
+        // Publish advertisement
+        /**
+         * Publishes an advertisement
+         * @param {string} adId - The ID of the advertisement to publish
+         * @returns {Promise<boolean>} True if published successfully
+         * @throws {Error} If publishing fails
+         */
+        async function publishAd(adId) {
+            try {
+                await MarketingAPI.ads.publish(adId);
+                return true;
+            } catch (error) {
+                throw new Error('Failed to publish advertisement: ' + error.message);
+            }
+        }
+
+        // Update status message
+        /**
+         * Updates the status message display
+         * @param {string} message - The message to display
+         * @param {boolean} [isError=false] - Whether this is an error message
+         */
+        function updateStatus(message, isError = false) {
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.style.display = 'block';
+            statusDiv.style.backgroundColor = isError ? '#ffebee' : '#e8f5e9';
+            statusDiv.style.color = isError ? '#c62828' : '#2e7d32';
+            statusDiv.textContent = message;
+        }
+
+        // Initialize API when page loads
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                await initMarketingAPI();
+                updateStatus('Marketing API initialized successfully');
+                updatePreview(); // Initialize preview on page load
+            } catch (error) {
+                updateStatus(error.message, true);
+            }
+        });
+
+        // Form submission handler
+        document.getElementById('adForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            try {
+                setLoading(true);
+                updateStatus('Creating advertisement...');
+
+                const formData = {
+                    name: document.getElementById('adName').value,
+                    description: document.getElementById('adDescription').value,
+                    targetAudience: document.getElementById('targetAudience').value,
+                    budget: parseFloat(document.getElementById('budget').value),
+                    duration: parseInt(document.getElementById('duration').value)
+                };
+
+                const adId = await createAd(formData);
+                updateStatus('Advertisement created, publishing...');
+
+                await publishAd(adId);
+                updateStatus('Advertisement successfully created and published!');
+
+                this.reset();
+                updatePreview();
+            } catch (error) {
+                updateStatus(error.message, true);
+            } finally {
+                setLoading(false);
+            }
+        });
+    </script>
+</body>
+</html>
