@@ -1,0 +1,6 @@
+{
+    "python.defaultInterpreterPath": "/home/khor/miniconda3/bin/python",
+    "python.analysis.extraPaths": [
+        "/home/khor/miniconda3/lib/python3.11/site-packages"
+    ]
+}
