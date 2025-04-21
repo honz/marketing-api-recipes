@@ -33,9 +33,11 @@ Examples for working with product catalogs:
 
 ### [utils/](./utils/)
 Shared utility functions and constants:
-- API credentials
+- API credentials (loaded from environment variables)
 - Logging utilities
 - Common constants
+
+See [utils/README.md](./utils/README.md) for details on configuring your Meta API credentials using environment variables.
 
 ### [mapi-applets/](./mapi-applets/)
 Node.js examples for Marketing API integration
