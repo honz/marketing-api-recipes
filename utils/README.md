@@ -6,6 +6,7 @@ This directory contains utility functions and constants used throughout the Mark
 - `constants.py` - Common constants like API keys and account IDs
 - `demo_utils.py` - Utility functions for demos, including logging
 - `test_creds.py` - Test credentials for API access
+- `setup_meta_env.sh` - Setup script for environment variables
 
 ## Environment Variables
 
@@ -20,7 +21,35 @@ The API credentials are read from environment variables with fallbacks to defaul
 | META_CATALOG_ID | Product Catalog ID | 123 |
 | META_ACCESS_TOKEN | Long-lived access token | Placeholder token |
 
-You can set these variables in your shell before running any script:
+## Setup Scripts
+
+### Quick Setup
+
+The easiest way to set up environment variables is to use the provided setup script:
+
+1. Edit `setup_meta_env.sh` with your API credentials
+2. Run the script using source:
+   ```bash
+   source utils/setup_meta_env.sh
+   ```
+
+### Long-Lived Access Token Generation
+
+For better security and convenience, use the long-lived token generation script:
+
+```bash
+cd /path/to/marketing-api-recipes
+./get_long_lived_token.py [short_lived_token]
+```
+
+This script:
+- Exchanges a short-lived token for a long-lived token (60-day validity)
+- Updates your shell configuration file
+- Sets the META_ACCESS_TOKEN environment variable
+
+### Manual Setup
+
+You can also set these variables manually in your shell before running any script:
 
 ```bash
 export META_APP_ID=your_app_id

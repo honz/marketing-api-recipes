@@ -1,4 +1,5 @@
 import sys
+import os
 import random
 from PIL import Image, ImageDraw
 from facebook_business.api import FacebookAdsApi
@@ -6,8 +7,11 @@ from facebook_business.adobjects.adaccount import AdAccount
 from facebook_business.adobjects.adimage import AdImage
 
 # Import credentials from your constants file
-import sys
-sys.path.append("..")
+# Add the project root to Python path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+sys.path.insert(0, project_root)
+
 from utils.constants import (
     AD_ACCOUNT_ID as ad_account_id,
     APP_ID as app_id,
