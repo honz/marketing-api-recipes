@@ -1,0 +1,26 @@
+@startuml FBL4B Authorization Flow
+
+actor User
+participant "Local Server" as Server
+participant "Facebook OAuth" as OAuth
+participant "Facebook Graph API" as GraphAPI
+participant "Ad Account" as AdAccount
+
+User -> Server: Start FBL4B Demo
+Server -> OAuth: Open auth URL with config_id
+OAuth --> User: Show login dialog
+User -> OAuth: Authorize app
+OAuth --> Server: Redirect with auth code
+Server -> GraphAPI: Exchange code for token
+GraphAPI --> Server: Return access token
+Server -> GraphAPI: Get user info
+GraphAPI --> Server: Return user details
+Server -> GraphAPI: Get ad accounts
+GraphAPI --> Server: Return ad accounts list
+loop For each ad account
+    Server -> AdAccount: Get account details
+    AdAccount --> Server: Return account info
+end
+Server --> User: Display results
+
+@enduml 
