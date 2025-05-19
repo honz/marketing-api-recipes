@@ -20,6 +20,7 @@ The API credentials are read from environment variables with fallbacks to defaul
 | META_PAGE_ID | Meta Page ID | 123 |
 | META_CATALOG_ID | Product Catalog ID | 123 |
 | META_ACCESS_TOKEN | Long-lived access token | Placeholder token |
+| META_BUSINESS_ID | Meta Business ID | 123 |
 
 ## Setup Scripts
 

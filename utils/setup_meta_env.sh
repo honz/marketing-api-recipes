@@ -9,6 +9,7 @@ META_AD_ACCOUNT_ID=${META_AD_ACCOUNT_ID:-"act_your_ad_account_id_here"}
 META_PAGE_ID=${META_PAGE_ID:-"your_page_id_here"}
 META_CATALOG_ID=${META_CATALOG_ID:-"your_catalog_id_here"}
 META_ACCESS_TOKEN=${META_ACCESS_TOKEN:-"your_access_token_here"}
+META_BUSINESS_ID=${META_BUSINESS_ID:-"your_business_id_here"}
 
 # Export environment variables
 export META_APP_ID
@@ -17,7 +18,7 @@ export META_AD_ACCOUNT_ID
 export META_PAGE_ID
 export META_CATALOG_ID
 export META_ACCESS_TOKEN
-
+export META_BUSINESS_ID
 # Print confirmation message
 echo "Meta API environment variables set:"
 echo "-----------------------------------"
@@ -27,6 +28,7 @@ echo "META_AD_ACCOUNT_ID: $META_AD_ACCOUNT_ID"
 echo "META_PAGE_ID: $META_PAGE_ID"
 echo "META_CATALOG_ID: $META_CATALOG_ID"
 echo "META_ACCESS_TOKEN: ${META_ACCESS_TOKEN:0:10}...${META_ACCESS_TOKEN: -4}"
+echo "META_BUSINESS_ID: $META_BUSINESS_ID"
 echo ""
 echo "Note: Edit this file to add your actual API credentials"
 echo "To update your access token with a long-lived token, run:"
