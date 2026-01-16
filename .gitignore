@@ -2,3 +2,6 @@ venv/*
 __pycache__
 *.log
 *.pyc
+
+# CPAS config with credentials (do not commit)
+cpas_demos/config.py
