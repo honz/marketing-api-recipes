@@ -12,7 +12,6 @@ $pip install streamlit pandas
 $streamlit run partnership_ads_ui.py
 """
 
-import io
 import pandas as pd
 import streamlit as st
 from partnership_ads_booster import (
@@ -96,8 +95,8 @@ def main():
                         if include_metrics:
                             st.info("⏳ Fetching engagement metrics (likes, comments) requires additional API calls per media. This may take a while...")
 
-                        # Use a temporary file path
-                        temp_output = f"/tmp/{output_filename}"
+                        # Use current directory for output
+                        temp_output = output_filename
                         fetch_all_advertisable_medias(
                             access_token,
                             ig_account_id,
@@ -156,6 +155,8 @@ def main():
             **Optional:**
             - `app_link`: CTA app link
             - `product_set_id`: Product set ID
+            - `utm_parameters`: UTM parameters in query string format (e.g., `utm_source=instagram&utm_medium=paid`)
+            - `testimonial`: Testimonial text for the ad
 
             **Note:** Stories URLs are not supported and will be rejected.
             """
@@ -200,9 +201,9 @@ def main():
             else:
                 with st.spinner("Creating partnership ads..."):
                     try:
-                        # Save uploaded file temporarily
-                        temp_input = f"/tmp/input_{uploaded_file.name}"
-                        temp_output_create = f"/tmp/{output_filename_create}"
+                        # Save uploaded file to current directory
+                        temp_input = f"input_{uploaded_file.name}"
+                        temp_output_create = output_filename_create
 
                         with open(temp_input, "wb") as f:
                             f.write(uploaded_file.getbuffer())
