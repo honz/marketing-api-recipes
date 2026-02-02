@@ -822,6 +822,203 @@ class TestCreateAdCreative:
                 "myapp://landing",
             )
 
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_utm_parameters(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that utm_parameters is passed as url_tags"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            "myapp://landing",
+            None,  # product_set_id
+            "utm_source=instagram&utm_medium=paid",  # utm_parameters
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        assert "url_tags" in call_args[1]["params"]
+        assert call_args[1]["params"]["url_tags"] == "utm_source=instagram&utm_medium=paid"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_testimonial_and_ad_code(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that testimonial is included in branded_content when ad_code is provided"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            "test_ad_code",  # ad_code
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            "myapp://landing",
+            None,  # product_set_id
+            None,  # utm_parameters
+            "This product is amazing!",  # testimonial
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        assert "branded_content" in call_args[1]["params"]
+        branded_content = json.loads(call_args[1]["params"]["branded_content"])
+        assert branded_content["instagram_boost_post_access_token"] == "test_ad_code"
+        assert branded_content["testimonial"] == "This product is amazing!"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_testimonial_without_ad_code(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that testimonial is included in branded_content when only source_instagram_media_id is provided"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,  # ad_code
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            "myapp://landing",
+            None,  # product_set_id
+            None,  # utm_parameters
+            "Great experience with this product!",  # testimonial
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        assert "branded_content" in call_args[1]["params"]
+        branded_content = json.loads(call_args[1]["params"]["branded_content"])
+        assert "instagram_boost_post_access_token" not in branded_content
+        assert branded_content["testimonial"] == "Great experience with this product!"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_all_optional_params(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that all optional parameters (product_set_id, utm_parameters, testimonial) work together"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            "test_ad_code",
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            "myapp://landing",
+            "product_set_123",  # product_set_id
+            "utm_source=instagram&utm_medium=paid&utm_campaign=summer",  # utm_parameters
+            "Highly recommend this!",  # testimonial
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+
+        # Check utm_parameters
+        assert params["url_tags"] == "utm_source=instagram&utm_medium=paid&utm_campaign=summer"
+
+        # Check testimonial in branded_content
+        branded_content = json.loads(params["branded_content"])
+        assert branded_content["testimonial"] == "Highly recommend this!"
+        assert branded_content["instagram_boost_post_access_token"] == "test_ad_code"
+
+        # Check product_set_id
+        assert "degrees_of_freedom_spec" in params
+        assert "creative_sourcing_spec" in params
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_without_optional_params(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that branded_content is not set when no ad_code or testimonial is provided"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,  # ad_code
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            "myapp://landing",
+            None,  # product_set_id
+            None,  # utm_parameters
+            None,  # testimonial
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+
+        # branded_content should not be set when no ad_code or testimonial
+        assert "branded_content" not in params
+        assert "url_tags" not in params
+
 
 class TestCreateAd:
     """Tests for create_ad function"""
