@@ -59,10 +59,10 @@ def main():
             )
 
             limit = st.number_input(
-                "Limit (Optional)",
-                min_value=0,
-                value=None,
-                help="Maximum number of medias to fetch. Leave empty for no limit.",
+                "Limit",
+                min_value=1,
+                value=25,
+                help="Maximum number of medias to fetch (default: 25).",
             )
 
             only_with_permission = st.checkbox(
