@@ -21,7 +21,7 @@ from shared.cpas_api_client import (
     accept_collaboration_request,
     reject_collaboration_request,
     get_suggested_partners,
-    get_owned_catalog_segments,
+    get_owned_product_catalogs,
     get_shared_catalog_segments,
     share_catalog_segment,
     create_ad_account,
@@ -201,23 +201,41 @@ class TestCatalogSegments(unittest.TestCase):
     """Tests for catalog segment functions."""
 
     @patch("shared.cpas_api_client.make_api_request")
-    def test_get_owned_catalog_segments_success(self, mock_api):
-        """Test getting owned catalog segments."""
+    def test_get_owned_product_catalogs_success(self, mock_api):
+        """Test getting owned product catalogs."""
         mock_api.return_value = (
             {
                 "data": [
-                    {"id": "cat_1", "name": "Electronics", "product_count": 1000},
-                    {"id": "cat_2", "name": "Fashion", "product_count": 2000},
+                    {"id": "cat_1", "name": "Electronics", "product_count": 1000, "is_catalog_segment": False},
+                    {"id": "cat_2", "name": "Fashion Segment", "product_count": 200, "is_catalog_segment": True},
                 ]
             },
             None,
         )
 
-        catalogs, error = get_owned_catalog_segments("test_token", "bm_123")
+        catalogs, error = get_owned_product_catalogs("test_token", "bm_123")
 
         self.assertIsNone(error)
         self.assertEqual(len(catalogs), 2)
-        self.assertEqual(catalogs[0]["name"], "Electronics")
+
+    @patch("shared.cpas_api_client.make_api_request")
+    def test_get_owned_product_catalogs_segments_only(self, mock_api):
+        """Test filtering to only catalog segments."""
+        mock_api.return_value = (
+            {
+                "data": [
+                    {"id": "cat_1", "name": "Electronics", "product_count": 1000, "is_catalog_segment": False},
+                    {"id": "cat_2", "name": "Fashion Segment", "product_count": 200, "is_catalog_segment": True},
+                ]
+            },
+            None,
+        )
+
+        segments, error = get_owned_product_catalogs("test_token", "bm_123", segments_only=True)
+
+        self.assertIsNone(error)
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0]["name"], "Fashion Segment")
 
     @patch("shared.cpas_api_client.make_api_request")
     def test_get_shared_catalog_segments_success(self, mock_api):

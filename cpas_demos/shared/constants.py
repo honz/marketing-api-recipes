@@ -63,3 +63,7 @@ class CTAType:
 
 # Default daily budget in paisa (100 INR = 10000 paisa)
 DEFAULT_DAILY_BUDGET = 100000  # 1000 INR in paisa
+
+# Cache TTL values (seconds)
+CACHE_TTL_CATALOGS = 2592000     # 1 month - catalog list rarely changes
+CACHE_TTL_PARTNERSHIPS = 604800  # 1 week - brand acceptances trickle in externally

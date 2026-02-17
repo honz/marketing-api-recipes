@@ -55,9 +55,6 @@ DEFAULT_CONTACT_NAME: Optional[str] = os.environ.get("CPAS_CONTACT_NAME", None)
 MERCHANT_BUSINESS_ID: Optional[str] = os.environ.get("CPAS_MERCHANT_BM_ID", None)
 # MERCHANT_BUSINESS_ID = "111222333"  # Uncomment and set
 
-MERCHANT_NAME: Optional[str] = os.environ.get("CPAS_MERCHANT_NAME", None)
-# MERCHANT_NAME = "My Merchant"  # Uncomment and set
-
 
 # =============================================================================
 # India Merchant Business IDs

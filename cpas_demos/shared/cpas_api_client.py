@@ -62,7 +62,7 @@ def make_api_request(
 
         response_data = response.json()
 
-        if response.status_code == 200:
+        if response.ok:
             return response_data, None
         else:
             error = response_data.get("error", {})
@@ -280,26 +280,88 @@ def get_collaborative_ads_merchants(
 # Catalog Segment APIs
 # =============================================================================
 
-def get_owned_catalog_segments(
+def get_owned_product_catalogs(
     access_token: str,
     business_id: str,
-    limit: int = 50,
+    limit: int = 250,
+    segments_only: bool = False,
+    catalogs_only: bool = False,
 ) -> Tuple[Optional[List], Optional[str]]:
     """
-    Get catalog segments owned by a business.
+    Get product catalogs owned by a business. Paginates to fetch all results.
 
     Args:
         access_token: Facebook access token
         business_id: Business Manager ID
-        limit: Maximum number of segments
+        limit: Page size per request
+        segments_only: If True, return only catalog segments
+        catalogs_only: If True, return only full catalogs (not segments)
 
     Returns:
-        Tuple of (list of catalog segments, error_message)
+        Tuple of (list of catalogs/segments, error_message)
     """
     endpoint = f"{business_id}/owned_product_catalogs"
     params = {
         "limit": limit,
-        "fields": "id,name,product_count,vertical",
+        "fields": "id,name,product_count,vertical,is_catalog_segment",
+    }
+
+    response, error = make_api_request(access_token, endpoint, params=params)
+
+    if error:
+        return None, error
+
+    all_data = []
+    if response and "data" in response:
+        all_data.extend(response["data"])
+
+        # Paginate through all results
+        headers = {"Authorization": f"Bearer {access_token}"}
+        while "paging" in response and "next" in response["paging"]:
+            try:
+                resp = requests.get(response["paging"]["next"], headers=headers)
+                response = resp.json()
+                if "data" in response:
+                    all_data.extend(response["data"])
+                else:
+                    break
+            except Exception:
+                break
+
+    if segments_only:
+        all_data = [c for c in all_data if c.get("is_catalog_segment", False)]
+    elif catalogs_only:
+        all_data = [c for c in all_data if not c.get("is_catalog_segment", False)]
+
+    return all_data, None
+
+
+def get_catalog_share_settings(
+    access_token: str,
+    catalog_id: str,
+    limit: int = 50,
+) -> Tuple[Optional[List], Optional[str]]:
+    """
+    Get collaborative ads share settings for a catalog.
+
+    Returns the list of businesses that the catalog has been shared with
+    (the "attempt" list). Use with get_catalog_agencies to derive status:
+    - In share_settings AND agencies = ACCEPTED
+    - In share_settings but NOT agencies = PENDING
+    - In agencies but NOT share_settings = directly granted access
+
+    Args:
+        access_token: Facebook access token
+        catalog_id: Product catalog or catalog segment ID
+        limit: Maximum number of results
+
+    Returns:
+        Tuple of (list of share settings, error_message)
+    """
+    endpoint = f"{catalog_id}/collaborative_ads_share_settings"
+    params = {
+        "limit": limit,
+        "fields": "id,agency_business",
     }
 
     response, error = make_api_request(access_token, endpoint, params=params)
@@ -311,6 +373,98 @@ def get_owned_catalog_segments(
         return response["data"], None
 
     return [], None
+
+
+def get_catalog_agencies(
+    access_token: str,
+    catalog_id: str,
+    limit: int = 50,
+) -> Tuple[Optional[List], Optional[str]]:
+    """
+    Get agencies/brands with active access to a catalog.
+
+    Brands that appear here have accepted the sharing request.
+
+    Args:
+        access_token: Facebook access token
+        catalog_id: Product catalog or catalog segment ID
+        limit: Maximum number of results
+
+    Returns:
+        Tuple of (list of agencies with access, error_message)
+    """
+    endpoint = f"{catalog_id}/agencies"
+    params = {
+        "limit": limit,
+        "fields": "id,name,permitted_tasks",
+    }
+
+    response, error = make_api_request(access_token, endpoint, params=params)
+
+    if error:
+        return None, error
+
+    if response and "data" in response:
+        return response["data"], None
+
+    return [], None
+
+
+def get_catalog_partnership_status(
+    access_token: str,
+    catalog_id: str,
+) -> Tuple[Optional[List], Optional[str]]:
+    """
+    Get the partnership status for all brands on a catalog segment.
+
+    Derives status by comparing share_settings (attempts) vs agencies (accepted).
+
+    Returns:
+        Tuple of (list of dicts with brand info and status, error_message)
+    """
+    share_settings, err1 = get_catalog_share_settings(access_token, catalog_id)
+    agencies, err2 = get_catalog_agencies(access_token, catalog_id)
+
+    if err1 and err2:
+        return None, f"share_settings: {err1}; agencies: {err2}"
+
+    share_settings = share_settings or []
+    agencies = agencies or []
+
+    # Build a set of accepted agency IDs
+    accepted_ids = {a["id"] for a in agencies}
+
+    # Build a set of shared-with business IDs
+    shared_businesses = {}
+    for s in share_settings:
+        biz = s.get("agency_business", {})
+        biz_id = biz.get("id")
+        if biz_id:
+            shared_businesses[biz_id] = biz.get("name", "Unknown")
+
+    results = []
+
+    # Shared and accepted = ACCEPTED; shared but not accepted = PENDING
+    for biz_id, biz_name in shared_businesses.items():
+        agency_info = next((a for a in agencies if a["id"] == biz_id), None)
+        results.append({
+            "business_id": biz_id,
+            "business_name": biz_name,
+            "status": "ACCEPTED" if biz_id in accepted_ids else "PENDING",
+            "permitted_tasks": agency_info.get("permitted_tasks", []) if agency_info else [],
+        })
+
+    # Agencies not in share_settings = directly granted access
+    for a in agencies:
+        if a["id"] not in shared_businesses:
+            results.append({
+                "business_id": a["id"],
+                "business_name": a.get("name", "Unknown"),
+                "status": "ACCEPTED",
+                "permitted_tasks": a.get("permitted_tasks", []),
+            })
+
+    return results, None
 
 
 def get_shared_catalog_segments(
@@ -350,23 +504,188 @@ def share_catalog_segment(
     access_token: str,
     catalog_id: str,
     brand_business_id: str,
+    utm_source: Optional[str] = None,
+    utm_medium: Optional[str] = None,
+    utm_campaign: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
-    Share a catalog segment with a brand.
+    Share a catalog segment with a brand via the /agencies endpoint.
+    Sends utm_settings and enabled_collab_terms so the share appears
+    on the collaborative_ads_share_settings edge.
 
     Args:
         access_token: Facebook access token
         catalog_id: Catalog segment ID
         brand_business_id: Brand's Business Manager ID
+        utm_source: UTM source parameter
+        utm_medium: UTM medium parameter
+        utm_campaign: UTM campaign parameter
 
     Returns:
         Tuple of (success, error_message)
     """
+    import json
+
     endpoint = f"{catalog_id}/agencies"
     params = {
         "business": brand_business_id,
         "permitted_tasks": ["ADVERTISE"],
+        "enabled_collab_terms": [
+            "ENFORCE_CREATE_NEW_AD_ACCOUNT",
+            "ENFORCE_SHARE_AD_PERFORMANCE_ACCESS",
+        ],
     }
+
+    utm_settings = {}
+    if utm_source:
+        utm_settings["campaign_source"] = utm_source
+    if utm_medium:
+        utm_settings["campaign_medium"] = utm_medium
+    if utm_campaign:
+        utm_settings["campaign_name"] = utm_campaign
+    if utm_settings:
+        params["utm_settings"] = json.dumps(utm_settings)
+
+    response, error = make_api_request(
+        access_token, endpoint, method="POST", params=params
+    )
+
+    if error:
+        return False, error
+
+    return True, None
+
+
+def get_catalog_products(
+    access_token: str,
+    catalog_id: str,
+    fields: str = "brand",
+    limit: int = 250,
+) -> Tuple[Optional[List], Optional[str]]:
+    """
+    Get products from a catalog for discovering available field values.
+
+    Args:
+        access_token: Facebook access token
+        catalog_id: Product catalog ID
+        fields: Comma-separated fields to fetch (e.g., "brand,name")
+        limit: Maximum number of products to fetch
+
+    Returns:
+        Tuple of (list of products, error_message)
+    """
+    endpoint = f"{catalog_id}/products"
+    params = {
+        "fields": fields,
+        "limit": limit,
+    }
+
+    all_products = []
+    response, error = make_api_request(access_token, endpoint, params=params)
+
+    if error:
+        return None, error
+
+    if response and "data" in response:
+        all_products.extend(response["data"])
+
+        # Paginate to get more products for better brand coverage
+        headers = {"Authorization": f"Bearer {access_token}"}
+        while "paging" in response and "next" in response["paging"] and len(all_products) < 1000:
+            next_url = response["paging"]["next"]
+            try:
+                resp = requests.get(next_url, headers=headers)
+                response = resp.json()
+                if "data" in response:
+                    all_products.extend(response["data"])
+                else:
+                    break
+            except Exception:
+                break
+
+    return all_products, None
+
+
+def create_catalog_segment(
+    access_token: str,
+    business_id: str,
+    parent_catalog_id: str,
+    name: str,
+    catalog_segment_filter: Dict,
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Create a catalog segment from a parent catalog.
+
+    Uses POST /{business_id}/owned_product_catalogs with parent_catalog_id
+    and catalog_segment_filter as per the Collaborative Ads documentation.
+
+    Args:
+        access_token: Facebook access token
+        business_id: Merchant's Business Manager ID
+        parent_catalog_id: Parent catalog ID
+        name: Segment name
+        catalog_segment_filter: Filter in WCA rule format, e.g.
+            {"and": [{"or": [{"brand": {"eq": "Nike"}}]}]}
+
+    Returns:
+        Tuple of (catalog_segment_id, error_message)
+    """
+    import json
+
+    endpoint = f"{business_id}/owned_product_catalogs"
+    params = {
+        "name": name,
+        "parent_catalog_id": parent_catalog_id,
+        "catalog_segment_filter": json.dumps(catalog_segment_filter),
+    }
+
+    response, error = make_api_request(
+        access_token, endpoint, method="POST", params=params
+    )
+
+    if error:
+        return None, error
+
+    if response and "id" in response:
+        return response["id"], None
+
+    return None, "Catalog segment ID not found in response"
+
+
+def share_segment_with_utm(
+    access_token: str,
+    catalog_id: str,
+    brand_business_id: str,
+    utm_source: Optional[str] = None,
+    utm_medium: Optional[str] = None,
+    utm_campaign: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Share a catalog segment with a brand via collaborative_ads_share_settings,
+    optionally setting UTM parameters for tracking.
+
+    Args:
+        access_token: Facebook access token
+        catalog_id: Catalog segment ID
+        brand_business_id: Brand's Business Manager ID
+        utm_source: UTM source parameter
+        utm_medium: UTM medium parameter
+        utm_campaign: UTM campaign parameter
+
+    Returns:
+        Tuple of (success, error_message)
+    """
+    endpoint = f"{catalog_id}/collaborative_ads_share_settings"
+    params = {
+        "agency_business": brand_business_id,
+    }
+
+    if utm_source:
+        params["utm_source"] = utm_source
+    if utm_medium:
+        params["utm_medium"] = utm_medium
+    if utm_campaign:
+        params["utm_campaign"] = utm_campaign
 
     response, error = make_api_request(
         access_token, endpoint, method="POST", params=params
