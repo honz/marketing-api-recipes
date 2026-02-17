@@ -2,3 +2,13 @@ venv/*
 __pycache__
 *.log
 *.pyc
+.DS_Store
+
+# CPAS config with credentials (do not commit)
+cpas_demos/config.py
+cpas_demos/merchant_platform/config.py
+
+# CPAS SQLite cache (auto-generated at runtime)
+cpas_demos/merchant_platform/.cpas_cache.db
+*.db-shm
+*.db-wal
