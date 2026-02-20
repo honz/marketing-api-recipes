@@ -62,6 +62,245 @@ def extract_instagram_shortcode(permalink: str) -> str:
     return permalink.strip("/")
 
 
+def fetch_account_level_permissions(
+    access_token: str,
+    ig_account_id: str,
+    output_csv: Optional[str] = None,
+) -> List[Dict]:
+    """
+    Fetch all existing account-level permissions for partnership ads.
+
+    Uses the Account-Level Permissioning API to get the list of creator accounts
+    that have granted permission to the brand/advertiser account.
+
+    API Reference: GET /{brand-ig-id}/branded_content_ad_permissions
+
+    Args:
+        access_token: Facebook/Instagram access token
+        ig_account_id: Instagram account ID (brand's account)
+        output_csv: Optional output CSV file path
+
+    Returns:
+        List of permission records with creator account info
+    """
+    print(f"Fetching account-level permissions for IG account {ig_account_id}...")
+
+    url = f"https://graph.facebook.com/v24.0/{ig_account_id}/branded_content_ad_permissions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}",
+    }
+    params = {
+        "fields": "creator_ig_id,creator_username,permission_status",
+    }
+
+    all_permissions = []
+
+    try:
+        while True:
+            response = requests.get(url, headers=headers, params=params)
+
+            if response.status_code != 200:
+                print(f"Error: {response.status_code} - {response.text}")
+                return []
+
+            response_data = response.json()
+
+            if "data" in response_data:
+                permissions = response_data["data"]
+                all_permissions.extend(permissions)
+                print(
+                    f"Fetched {len(permissions)} permissions (Total: {len(all_permissions)})"
+                )
+
+            if "paging" in response_data and "next" in response_data["paging"]:
+                url = response_data["paging"]["next"]
+                params = {}
+            else:
+                break
+
+        if output_csv and all_permissions:
+            fieldnames = ["creator_ig_id", "creator_username", "permission_status"]
+            with open(output_csv, "w", newline="", encoding="utf-8") as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                for permission in all_permissions:
+                    writer.writerow(
+                        {
+                            "creator_ig_id": permission.get("creator_ig_id", ""),
+                            "creator_username": permission.get("creator_username", ""),
+                            "permission_status": permission.get(
+                                "permission_status", ""
+                            ),
+                        }
+                    )
+            print(
+                f"\nSuccessfully saved {len(all_permissions)} permissions to {output_csv}"
+            )
+
+        return all_permissions
+
+    except requests.exceptions.RequestException as e:
+        print(f"Request error occurred: {e}")
+        return []
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return []
+
+
+def request_account_level_permission(
+    access_token: str,
+    ig_account_id: str,
+    creator_instagram_account: Optional[str] = None,
+    creator_instagram_username: Optional[str] = None,
+) -> Dict:
+    """
+    Request account-level permission from a creator for partnership ads.
+
+    Uses the Account-Level Permissioning API to request permission from
+    a creator to run partnership ads using their content.
+
+    API Reference: POST /{brand-ig-id}/branded_content_ad_permissions
+
+    Args:
+        access_token: Facebook/Instagram access token
+        ig_account_id: Instagram account ID (brand's account)
+        creator_instagram_account: Creator's Instagram account ID (either this or creator_instagram_username is required)
+        creator_instagram_username: Creator's Instagram username (either this or creator_instagram_account is required)
+
+    Returns:
+        Dict with success status and any error message
+    """
+    if not creator_instagram_account and not creator_instagram_username:
+        return {
+            "success": False,
+            "error": "Either creator_instagram_account or creator_instagram_username is required",
+        }
+
+    url = f"https://graph.facebook.com/v24.0/{ig_account_id}/branded_content_ad_permissions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}",
+    }
+    data = {}
+    if creator_instagram_account:
+        data["creator_instagram_account"] = creator_instagram_account
+    elif creator_instagram_username:
+        data["creator_instagram_username"] = creator_instagram_username
+
+    try:
+        response = requests.post(url, headers=headers, json=data)
+
+        if response.status_code == 200:
+            result = response.json()
+            return {"success": result.get("success", True), "error": None}
+        else:
+            error_message = response.text
+            return {"success": False, "error": error_message}
+
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def bulk_request_account_level_permissions(
+    access_token: str,
+    ig_account_id: str,
+    input_csv: str,
+    output_csv: str = "permission_request_results.csv",
+    max_rows: int = 100,
+) -> None:
+    """
+    Bulk request account-level permissions from creators using a CSV file.
+
+    The input CSV must have either 'creator_instagram_account' or 'creator_instagram_username' column
+    (or both). At least one identifier is required per row.
+
+    Args:
+        access_token: Facebook/Instagram access token
+        ig_account_id: Instagram account ID (brand's account)
+        input_csv: Input CSV file path with creator IDs or usernames
+        output_csv: Output CSV file path for results
+        max_rows: Maximum number of rows to process (default: 100)
+    """
+    print(f"Processing bulk permission requests from {input_csv}...")
+
+    try:
+        with open(input_csv, "r", newline="", encoding="utf-8-sig") as csvfile:
+            reader = csv.DictReader(csvfile)
+            rows = list(reader)
+
+        if not rows:
+            print("No data found in input CSV")
+            return
+
+        if len(rows) > max_rows:
+            print(f"Error: Input CSV has {len(rows)} rows, which exceeds the limit of {max_rows}")
+            print(f"Please reduce the number of rows to {max_rows} or less")
+            return
+
+        results = []
+        total = len(rows)
+        for idx, row in enumerate(rows, 1):
+            creator_account = row.get("creator_instagram_account", "").strip()
+            creator_username = row.get("creator_instagram_username", "").strip()
+
+            if not creator_account and not creator_username:
+                results.append(
+                    {
+                        "creator_instagram_account": creator_account,
+                        "creator_instagram_username": creator_username,
+                        "status": "failed",
+                        "error": "Either creator_instagram_account or creator_instagram_username is required",
+                    }
+                )
+                continue
+
+            identifier = creator_username or creator_account
+            print(f"[{idx}/{total}] Requesting permission from {identifier}...")
+
+            result = request_account_level_permission(
+                access_token,
+                ig_account_id,
+                creator_instagram_account=creator_account if creator_account else None,
+                creator_instagram_username=(
+                    creator_username if creator_username else None
+                ),
+            )
+
+            results.append(
+                {
+                    "creator_instagram_account": creator_account,
+                    "creator_instagram_username": creator_username,
+                    "status": "success" if result["success"] else "failed",
+                    "error": result.get("error", ""),
+                }
+            )
+
+        fieldnames = [
+            "creator_instagram_account",
+            "creator_instagram_username",
+            "status",
+            "error",
+        ]
+        with open(output_csv, "w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(results)
+
+        successful = sum(1 for r in results if r["status"] == "success")
+        failed = sum(1 for r in results if r["status"] == "failed")
+        print(f"\nBulk permission request completed!")
+        print(f"Successful: {successful}, Failed: {failed}")
+        print(f"Results saved to {output_csv}")
+
+    except FileNotFoundError:
+        print(f"Error: Input file '{input_csv}' not found")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+
 def fetch_media_insights(
     access_token: str,
     media_id: str,
@@ -158,7 +397,11 @@ def fetch_all_advertisable_medias(
 
                 # Apply permission filter if requested
                 if only_with_permission:
-                    medias = [m for m in medias if m.get("has_permission_for_partnership_ad", False)]
+                    medias = [
+                        m
+                        for m in medias
+                        if m.get("has_permission_for_partnership_ad", False)
+                    ]
 
                 all_medias.extend(medias)
                 print(f"Fetched {len(medias)} medias (Total: {len(all_medias)})")

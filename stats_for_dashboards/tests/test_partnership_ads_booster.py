@@ -1312,3 +1312,490 @@ class TestMain:
         call_kwargs = mock_fetch.call_args[1]
         assert call_kwargs["only_with_permission"] == True
         assert call_kwargs["include_engagement_metrics"] == True
+
+
+class TestFetchAccountLevelPermissions:
+    """Tests for fetch_account_level_permissions function"""
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_permissions_success(self, mock_get, mock_access_token, mock_ig_account_id):
+        """Test successful fetch of account level permissions"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": [
+                {
+                    "id": "123",
+                    "creator_ig_id": "17841401234567890",
+                    "creator_username": "creator1",
+                    "permission_status": "approved",
+                },
+                {
+                    "id": "456",
+                    "creator_ig_id": "17841409876543210",
+                    "creator_username": "creator2",
+                    "permission_status": "pending",
+                },
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        result = partnership_ads_booster.fetch_account_level_permissions(
+            mock_access_token, mock_ig_account_id
+        )
+
+        assert len(result) == 2
+        assert result[0]["creator_username"] == "creator1"
+        assert result[1]["permission_status"] == "pending"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_permissions_with_pagination(self, mock_get, mock_access_token, mock_ig_account_id):
+        """Test fetch permissions with pagination"""
+        first_response = MagicMock()
+        first_response.status_code = 200
+        first_response.json.return_value = {
+            "data": [
+                {"id": "1", "creator_ig_id": "111", "creator_username": "user1", "permission_status": "approved"}
+            ],
+            "paging": {"next": "https://graph.facebook.com/next_page"}
+        }
+
+        second_response = MagicMock()
+        second_response.status_code = 200
+        second_response.json.return_value = {
+            "data": [
+                {"id": "2", "creator_ig_id": "222", "creator_username": "user2", "permission_status": "approved"}
+            ]
+        }
+
+        mock_get.side_effect = [first_response, second_response]
+
+        result = partnership_ads_booster.fetch_account_level_permissions(
+            mock_access_token, mock_ig_account_id
+        )
+
+        assert len(result) == 2
+        assert mock_get.call_count == 2
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_permissions_api_error(self, mock_get, mock_access_token, mock_ig_account_id):
+        """Test fetch permissions with API error"""
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = "Bad Request"
+        mock_get.return_value = mock_response
+
+        result = partnership_ads_booster.fetch_account_level_permissions(
+            mock_access_token, mock_ig_account_id
+        )
+
+        assert result == []
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_permissions_writes_csv(self, mock_get, mock_access_token, mock_ig_account_id, tmp_path):
+        """Test fetch permissions writes to CSV file"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": [
+                {
+                    "id": "123",
+                    "creator_ig_id": "17841401234567890",
+                    "creator_username": "creator1",
+                    "permission_status": "approved",
+                }
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        output_file = tmp_path / "permissions.csv"
+        result = partnership_ads_booster.fetch_account_level_permissions(
+            mock_access_token, mock_ig_account_id, str(output_file)
+        )
+
+        assert output_file.exists()
+        with open(output_file, "r") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            assert len(rows) == 1
+            assert rows[0]["creator_username"] == "creator1"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_permissions_empty_response(self, mock_get, mock_access_token, mock_ig_account_id):
+        """Test fetch permissions with empty response"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": []}
+        mock_get.return_value = mock_response
+
+        result = partnership_ads_booster.fetch_account_level_permissions(
+            mock_access_token, mock_ig_account_id
+        )
+
+        assert result == []
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_permissions_request_exception(self, mock_get, mock_access_token, mock_ig_account_id):
+        """Test fetch permissions handles request exceptions"""
+        mock_get.side_effect = partnership_ads_booster.requests.exceptions.RequestException("Connection error")
+
+        result = partnership_ads_booster.fetch_account_level_permissions(
+            mock_access_token, mock_ig_account_id
+        )
+
+        assert result == []
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_permissions_csv_only_contains_required_columns(self, mock_get, mock_access_token, mock_ig_account_id, tmp_path):
+        """Test that CSV output only contains the required columns, not 'id'"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": [
+                {
+                    "id": "123",
+                    "creator_ig_id": "17841401234567890",
+                    "creator_username": "creator1",
+                    "permission_status": "approved",
+                    "extra_field": "should_be_ignored",
+                }
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        output_file = tmp_path / "permissions.csv"
+        partnership_ads_booster.fetch_account_level_permissions(
+            mock_access_token, mock_ig_account_id, str(output_file)
+        )
+
+        with open(output_file, "r") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            assert len(rows) == 1
+            assert "id" not in rows[0]
+            assert "extra_field" not in rows[0]
+            assert "creator_ig_id" in rows[0]
+            assert "creator_username" in rows[0]
+            assert "permission_status" in rows[0]
+
+
+class TestRequestAccountLevelPermission:
+    """Tests for request_account_level_permission function"""
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_request_permission_with_account_id_success(self, mock_post, mock_access_token, mock_ig_account_id):
+        """Test successful permission request with account ID"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"success": True}
+        mock_post.return_value = mock_response
+
+        result = partnership_ads_booster.request_account_level_permission(
+            mock_access_token,
+            mock_ig_account_id,
+            creator_instagram_account="17841401234567890"
+        )
+
+        assert result["success"] == True
+        assert result["error"] is None
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_request_permission_with_username_success(self, mock_post, mock_access_token, mock_ig_account_id):
+        """Test successful permission request with username"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"success": True}
+        mock_post.return_value = mock_response
+
+        result = partnership_ads_booster.request_account_level_permission(
+            mock_access_token,
+            mock_ig_account_id,
+            creator_instagram_username="creator_handle"
+        )
+
+        assert result["success"] == True
+        # Verify the correct field was sent
+        call_kwargs = mock_post.call_args
+        assert "creator_instagram_username" in call_kwargs[1]["json"]
+
+    def test_request_permission_missing_both_identifiers(self, mock_access_token, mock_ig_account_id):
+        """Test permission request fails when both identifiers are missing"""
+        result = partnership_ads_booster.request_account_level_permission(
+            mock_access_token,
+            mock_ig_account_id
+        )
+
+        assert result["success"] == False
+        assert "Either creator_instagram_account or creator_instagram_username is required" in result["error"]
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_request_permission_api_error(self, mock_post, mock_access_token, mock_ig_account_id):
+        """Test permission request with API error"""
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = '{"error":{"message":"Invalid creator instagram account","code":100}}'
+        mock_post.return_value = mock_response
+
+        result = partnership_ads_booster.request_account_level_permission(
+            mock_access_token,
+            mock_ig_account_id,
+            creator_instagram_account="invalid_id"
+        )
+
+        assert result["success"] == False
+        assert "Invalid creator instagram account" in result["error"]
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_request_permission_prefers_account_id_over_username(self, mock_post, mock_access_token, mock_ig_account_id):
+        """Test that account ID is preferred when both are provided"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"success": True}
+        mock_post.return_value = mock_response
+
+        partnership_ads_booster.request_account_level_permission(
+            mock_access_token,
+            mock_ig_account_id,
+            creator_instagram_account="17841401234567890",
+            creator_instagram_username="creator_handle"
+        )
+
+        call_kwargs = mock_post.call_args
+        json_data = call_kwargs[1]["json"]
+        assert "creator_instagram_account" in json_data
+        assert "creator_instagram_username" not in json_data
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_request_permission_request_exception(self, mock_post, mock_access_token, mock_ig_account_id):
+        """Test request permission handles request exceptions"""
+        mock_post.side_effect = partnership_ads_booster.requests.exceptions.RequestException("Connection error")
+
+        result = partnership_ads_booster.request_account_level_permission(
+            mock_access_token,
+            mock_ig_account_id,
+            creator_instagram_account="17841401234567890"
+        )
+
+        assert result["success"] == False
+        assert "Connection error" in result["error"]
+
+
+class TestBulkRequestAccountLevelPermissions:
+    """Tests for bulk_request_account_level_permissions function"""
+
+    @patch("stats_for_dashboards.partnership_ads_booster.request_account_level_permission")
+    def test_bulk_request_success(self, mock_request, mock_access_token, mock_ig_account_id, tmp_path):
+        """Test successful bulk permission request"""
+        mock_request.return_value = {"success": True, "error": None}
+
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+
+        with open(input_csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["creator_instagram_account", "creator_instagram_username"])
+            writer.writerow(["17841401234567890", "creator1"])
+            writer.writerow(["17841409876543210", "creator2"])
+
+        partnership_ads_booster.bulk_request_account_level_permissions(
+            mock_access_token,
+            mock_ig_account_id,
+            str(input_csv),
+            str(output_csv)
+        )
+
+        assert output_csv.exists()
+        with open(output_csv, "r") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            assert len(rows) == 2
+            assert all(row["status"] == "success" for row in rows)
+
+    @patch("stats_for_dashboards.partnership_ads_booster.request_account_level_permission")
+    def test_bulk_request_with_username_only(self, mock_request, mock_access_token, mock_ig_account_id, tmp_path):
+        """Test bulk request with only usernames"""
+        mock_request.return_value = {"success": True, "error": None}
+
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+
+        with open(input_csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["creator_instagram_username"])
+            writer.writerow(["creator1"])
+            writer.writerow(["creator2"])
+
+        partnership_ads_booster.bulk_request_account_level_permissions(
+            mock_access_token,
+            mock_ig_account_id,
+            str(input_csv),
+            str(output_csv)
+        )
+
+        assert mock_request.call_count == 2
+
+    def test_bulk_request_exceeds_limit(self, mock_access_token, mock_ig_account_id, tmp_path, capsys):
+        """Test bulk request fails when exceeding 100 row limit"""
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+
+        with open(input_csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["creator_instagram_username"])
+            for i in range(101):
+                writer.writerow([f"creator{i}"])
+
+        partnership_ads_booster.bulk_request_account_level_permissions(
+            mock_access_token,
+            mock_ig_account_id,
+            str(input_csv),
+            str(output_csv)
+        )
+
+        captured = capsys.readouterr()
+        assert "exceeds the limit of 100" in captured.out
+        assert not output_csv.exists()
+
+    def test_bulk_request_empty_csv(self, mock_access_token, mock_ig_account_id, tmp_path, capsys):
+        """Test bulk request with empty CSV"""
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+
+        with open(input_csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["creator_instagram_username"])
+
+        partnership_ads_booster.bulk_request_account_level_permissions(
+            mock_access_token,
+            mock_ig_account_id,
+            str(input_csv),
+            str(output_csv)
+        )
+
+        captured = capsys.readouterr()
+        assert "No data found" in captured.out
+
+    @patch("stats_for_dashboards.partnership_ads_booster.request_account_level_permission")
+    def test_bulk_request_missing_identifiers(self, mock_request, mock_access_token, mock_ig_account_id, tmp_path):
+        """Test bulk request skips rows with missing identifiers"""
+        mock_request.return_value = {"success": True, "error": None}
+
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+
+        with open(input_csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["creator_instagram_account", "creator_instagram_username"])
+            writer.writerow(["", ""])  # Missing both
+            writer.writerow(["17841401234567890", ""])  # Has account ID
+
+        partnership_ads_booster.bulk_request_account_level_permissions(
+            mock_access_token,
+            mock_ig_account_id,
+            str(input_csv),
+            str(output_csv)
+        )
+
+        with open(output_csv, "r") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            assert len(rows) == 2
+            assert rows[0]["status"] == "failed"
+            assert "Either creator_instagram_account or creator_instagram_username is required" in rows[0]["error"]
+            assert rows[1]["status"] == "success"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.request_account_level_permission")
+    def test_bulk_request_handles_utf8_bom(self, mock_request, mock_access_token, mock_ig_account_id, tmp_path):
+        """Test bulk request handles UTF-8 BOM in CSV files"""
+        mock_request.return_value = {"success": True, "error": None}
+
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+
+        # Write with UTF-8 BOM
+        with open(input_csv, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(["creator_instagram_username"])
+            writer.writerow(["creator1"])
+
+        partnership_ads_booster.bulk_request_account_level_permissions(
+            mock_access_token,
+            mock_ig_account_id,
+            str(input_csv),
+            str(output_csv)
+        )
+
+        # Verify it was called with the correct username (no BOM prefix)
+        call_kwargs = mock_request.call_args
+        assert call_kwargs[1].get("creator_instagram_username") == "creator1"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.request_account_level_permission")
+    def test_bulk_request_partial_failures(self, mock_request, mock_access_token, mock_ig_account_id, tmp_path):
+        """Test bulk request with some failures"""
+        mock_request.side_effect = [
+            {"success": True, "error": None},
+            {"success": False, "error": "Invalid account"},
+            {"success": True, "error": None},
+        ]
+
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+
+        with open(input_csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["creator_instagram_username"])
+            writer.writerow(["creator1"])
+            writer.writerow(["invalid_creator"])
+            writer.writerow(["creator3"])
+
+        partnership_ads_booster.bulk_request_account_level_permissions(
+            mock_access_token,
+            mock_ig_account_id,
+            str(input_csv),
+            str(output_csv)
+        )
+
+        with open(output_csv, "r") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            assert len(rows) == 3
+            assert rows[0]["status"] == "success"
+            assert rows[1]["status"] == "failed"
+            assert rows[1]["error"] == "Invalid account"
+            assert rows[2]["status"] == "success"
+
+    def test_bulk_request_file_not_found(self, mock_access_token, mock_ig_account_id, capsys):
+        """Test bulk request with non-existent file"""
+        partnership_ads_booster.bulk_request_account_level_permissions(
+            mock_access_token,
+            mock_ig_account_id,
+            "non_existent_file.csv",
+            "output.csv"
+        )
+
+        captured = capsys.readouterr()
+        assert "not found" in captured.out
+
+    @patch("stats_for_dashboards.partnership_ads_booster.request_account_level_permission")
+    def test_bulk_request_at_limit(self, mock_request, mock_access_token, mock_ig_account_id, tmp_path):
+        """Test bulk request exactly at the 100 row limit"""
+        mock_request.return_value = {"success": True, "error": None}
+
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+
+        with open(input_csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["creator_instagram_username"])
+            for i in range(100):
+                writer.writerow([f"creator{i}"])
+
+        partnership_ads_booster.bulk_request_account_level_permissions(
+            mock_access_token,
+            mock_ig_account_id,
+            str(input_csv),
+            str(output_csv)
+        )
+
+        assert output_csv.exists()
+        assert mock_request.call_count == 100
