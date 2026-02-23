@@ -177,6 +177,7 @@ def main():
             - `product_set_id`: Product set ID
             - `utm_parameters`: UTM parameters in query string format (e.g., `utm_source=instagram&utm_medium=paid`)
             - `testimonial`: Testimonial text for the ad
+            - `source_url`: Source URL for the creative
 
             **Note:** Stories URLs are not supported and will be rejected.
             """

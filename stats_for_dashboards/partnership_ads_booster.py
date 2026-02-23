@@ -580,6 +580,7 @@ def create_ad_creative(
     product_set_id: Optional[str] = None,
     utm_parameters: Optional[str] = None,
     testimonial: Optional[str] = None,
+    source_url: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Create ad creative.
@@ -597,6 +598,7 @@ def create_ad_creative(
         product_set_id: Product set ID (optional)
         utm_parameters: UTM parameters in query string format (optional)
         testimonial: Testimonial text for the ad (optional)
+        source_url: Source URL for the creative (optional)
 
     Returns:
         Tuple of (Creative ID or None, Error message or None)
@@ -640,6 +642,8 @@ def create_ad_creative(
     else:
         raise ValueError("ad_code or source_instagram_media_id must be passed")
 
+    # Build creative_sourcing_spec if product_set_id or source_url is provided
+    creative_sourcing_spec = {}
     if product_set_id:
         params["degrees_of_freedom_spec"] = json.dumps(
             {
@@ -648,9 +652,11 @@ def create_ad_creative(
                 }
             }
         )
-        params["creative_sourcing_spec"] = json.dumps(
-            {"associated_product_set_id": f"{product_set_id}"}
-        )
+        creative_sourcing_spec["associated_product_set_id"] = product_set_id
+    if source_url:
+        creative_sourcing_spec["source_url"] = source_url
+    if creative_sourcing_spec:
+        params["creative_sourcing_spec"] = json.dumps(creative_sourcing_spec)
 
     if utm_parameters:
         params["url_tags"] = utm_parameters
@@ -762,6 +768,7 @@ def create_partnership_ads_from_csv(
     - product_set_id (optional): Product set ID
     - utm_parameters (optional): UTM parameters in query string format (e.g., 'utm_source=instagram&utm_medium=paid')
     - testimonial (optional): Testimonial text for the ad
+    - source_url (optional): Source URL for the creative
 
     Args:
         access_token: Facebook/Instagram access token
@@ -802,6 +809,7 @@ def create_partnership_ads_from_csv(
             product_set_id = row.get("product_set_id", "")
             utm_parameters = row.get("utm_parameters", "")
             testimonial = row.get("testimonial", "")
+            source_url = row.get("source_url", "")
 
             required_fields = {
                 "cta_type": cta_type,
@@ -940,6 +948,7 @@ def create_partnership_ads_from_csv(
                     product_set_id if product_set_id else None,
                     utm_parameters if utm_parameters else None,
                     testimonial if testimonial else None,
+                    source_url if source_url else None,
                 )
 
                 if not creative_id:

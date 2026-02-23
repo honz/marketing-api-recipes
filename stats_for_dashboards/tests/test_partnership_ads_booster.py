@@ -942,7 +942,7 @@ class TestCreateAdCreative:
         mock_facebook_page_id,
         mock_ig_account_id,
     ):
-        """Test that all optional parameters (product_set_id, utm_parameters, testimonial) work together"""
+        """Test that all optional parameters (product_set_id, utm_parameters, testimonial, source_url) work together"""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"id": "creative_123"}
@@ -961,6 +961,7 @@ class TestCreateAdCreative:
             "product_set_123",  # product_set_id
             "utm_source=instagram&utm_medium=paid&utm_campaign=summer",  # utm_parameters
             "Highly recommend this!",  # testimonial
+            "https://example.com/source",  # source_url
         )
 
         assert creative_id == "creative_123"
@@ -976,9 +977,12 @@ class TestCreateAdCreative:
         assert branded_content["testimonial"] == "Highly recommend this!"
         assert branded_content["instagram_boost_post_access_token"] == "test_ad_code"
 
-        # Check product_set_id
+        # Check product_set_id and source_url in creative_sourcing_spec
         assert "degrees_of_freedom_spec" in params
         assert "creative_sourcing_spec" in params
+        creative_sourcing_spec = json.loads(params["creative_sourcing_spec"])
+        assert creative_sourcing_spec["associated_product_set_id"] == "product_set_123"
+        assert creative_sourcing_spec["source_url"] == "https://example.com/source"
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
     def test_create_creative_without_optional_params(
@@ -1018,6 +1022,89 @@ class TestCreateAdCreative:
         # branded_content should not be set when no ad_code or testimonial
         assert "branded_content" not in params
         assert "url_tags" not in params
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_source_url(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that source_url is included in creative_sourcing_spec"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,  # ad_code
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            "myapp://landing",
+            None,  # product_set_id
+            None,  # utm_parameters
+            None,  # testimonial
+            "https://example.com/source",  # source_url
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+
+        assert "creative_sourcing_spec" in params
+        creative_sourcing_spec = json.loads(params["creative_sourcing_spec"])
+        assert creative_sourcing_spec["source_url"] == "https://example.com/source"
+        assert "associated_product_set_id" not in creative_sourcing_spec
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_source_url_and_product_set(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that source_url and product_set_id are both included in creative_sourcing_spec"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,  # ad_code
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            "myapp://landing",
+            "product_set_123",  # product_set_id
+            None,  # utm_parameters
+            None,  # testimonial
+            "https://example.com/source",  # source_url
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+
+        assert "creative_sourcing_spec" in params
+        creative_sourcing_spec = json.loads(params["creative_sourcing_spec"])
+        assert creative_sourcing_spec["source_url"] == "https://example.com/source"
+        assert creative_sourcing_spec["associated_product_set_id"] == "product_set_123"
+        assert "degrees_of_freedom_spec" in params
 
 
 class TestCreateAd:
