@@ -45,5 +45,6 @@ from .cpas_api_client import (
     create_ad_set,
     get_business_info,
     validate_access_token,
+    get_client_businesses,
     create_cpas_campaign_with_ad_set,
 )
