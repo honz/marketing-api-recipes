@@ -32,20 +32,6 @@ ACCESS_TOKEN: Optional[str] = os.environ.get("CPAS_ACCESS_TOKEN", None)
 AGENCY_BUSINESS_ID: Optional[str] = os.environ.get("CPAS_AGENCY_BM_ID", None)
 # AGENCY_BUSINESS_ID = "123456789"  # Uncomment and set
 
-# Default brand to work with
-DEFAULT_BRAND_BUSINESS_ID: Optional[str] = os.environ.get("CPAS_BRAND_BM_ID", None)
-# DEFAULT_BRAND_BUSINESS_ID = "987654321"  # Uncomment and set
-
-DEFAULT_BRAND_NAME: Optional[str] = os.environ.get("CPAS_BRAND_NAME", None)
-# DEFAULT_BRAND_NAME = "My Brand"  # Uncomment and set
-
-# Contact info for collaboration requests
-DEFAULT_CONTACT_EMAIL: Optional[str] = os.environ.get("CPAS_CONTACT_EMAIL", None)
-# DEFAULT_CONTACT_EMAIL = "contact@agency.com"  # Uncomment and set
-
-DEFAULT_CONTACT_NAME: Optional[str] = os.environ.get("CPAS_CONTACT_NAME", None)
-# DEFAULT_CONTACT_NAME = "John Doe"  # Uncomment and set
-
 
 # =============================================================================
 # Merchant Configuration (for Merchant Platform)

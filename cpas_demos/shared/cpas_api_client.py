@@ -952,6 +952,56 @@ def validate_access_token(
     return response, None
 
 
+def get_client_businesses(
+    access_token: str,
+    business_id: str,
+    limit: int = 50,
+) -> Tuple[Optional[List], Optional[str]]:
+    """
+    Get client businesses (brands) that have partnered with this agency BM.
+
+    Uses the /{business_id}/clients edge to discover brands that have
+    added this agency as a partner in Business Settings.
+
+    Args:
+        access_token: Facebook access token
+        business_id: Agency's Business Manager ID
+        limit: Maximum number of clients per page
+
+    Returns:
+        Tuple of (list of client businesses, error_message)
+    """
+    endpoint = f"{business_id}/clients"
+    params = {
+        "limit": limit,
+        "fields": "id,name,verification_status",
+    }
+
+    response, error = make_api_request(access_token, endpoint, params=params)
+
+    if error:
+        return None, error
+
+    all_data = []
+    if response and "data" in response:
+        all_data.extend(response["data"])
+
+        # Paginate through all results
+        headers = {"Authorization": f"Bearer {access_token}"}
+        while "paging" in response and "next" in response["paging"]:
+            try:
+                resp = requests.get(response["paging"]["next"], headers=headers)
+                response = resp.json()
+                if "data" in response:
+                    all_data.extend(response["data"])
+                else:
+                    break
+            except Exception:
+                break
+
+    return all_data, None
+
+
 # =============================================================================
 # Full Flow Helpers
 # =============================================================================

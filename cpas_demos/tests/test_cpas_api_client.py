@@ -30,6 +30,7 @@ from shared.cpas_api_client import (
     create_ad_set,
     get_business_info,
     validate_access_token,
+    get_client_businesses,
     create_cpas_campaign_with_ad_set,
 )
 from shared.constants import CollabRequestStatus, CampaignObjective
@@ -475,6 +476,56 @@ class TestBusinessInfo(unittest.TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(info["name"], "Test User")
+
+
+class TestClientBusinesses(unittest.TestCase):
+    """Tests for get_client_businesses function."""
+
+    @patch("shared.cpas_api_client.make_api_request")
+    def test_get_client_businesses_success(self, mock_api):
+        """Test getting client businesses with multiple brands returned."""
+        mock_api.return_value = (
+            {
+                "data": [
+                    {"id": "brand_1", "name": "Brand Alpha", "verification_status": "verified"},
+                    {"id": "brand_2", "name": "Brand Beta", "verification_status": "not_verified"},
+                    {"id": "brand_3", "name": "Brand Gamma", "verification_status": "verified"},
+                ]
+            },
+            None,
+        )
+
+        brands, error = get_client_businesses("test_token", "agency_bm_123")
+
+        self.assertIsNone(error)
+        self.assertEqual(len(brands), 3)
+        self.assertEqual(brands[0]["id"], "brand_1")
+        self.assertEqual(brands[0]["name"], "Brand Alpha")
+        self.assertEqual(brands[1]["verification_status"], "not_verified")
+
+        # Verify correct endpoint was called
+        call_args = mock_api.call_args
+        self.assertEqual(call_args[0][1], "agency_bm_123/clients")
+
+    @patch("shared.cpas_api_client.make_api_request")
+    def test_get_client_businesses_empty(self, mock_api):
+        """Test getting client businesses when no clients exist."""
+        mock_api.return_value = ({"data": []}, None)
+
+        brands, error = get_client_businesses("test_token", "agency_bm_123")
+
+        self.assertIsNone(error)
+        self.assertEqual(len(brands), 0)
+
+    @patch("shared.cpas_api_client.make_api_request")
+    def test_get_client_businesses_api_error(self, mock_api):
+        """Test handling API error when getting client businesses."""
+        mock_api.return_value = (None, "API Error 190: Invalid OAuth access token")
+
+        brands, error = get_client_businesses("test_token", "agency_bm_123")
+
+        self.assertIsNone(brands)
+        self.assertIn("Invalid OAuth access token", error)
 
 
 if __name__ == "__main__":
