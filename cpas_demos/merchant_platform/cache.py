@@ -15,7 +15,9 @@ Cache strategy:
 """
 
 import json
+import os
 import sqlite3
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -70,8 +72,23 @@ class CacheDB:
         if db_path is None:
             db_path = str(Path(__file__).parent / ".cpas_cache.db")
         self._db_path = db_path
-        self._connect()
-        self._init_schema()
+        self._lock = threading.Lock()
+        try:
+            self._connect()
+            self._init_schema()
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
+            # Corrupted DB or stale WAL/SHM files — wipe and recreate
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.remove(self._db_path + suffix)
+                except OSError:
+                    pass
+            self._connect()
+            self._init_schema()
 
     def _connect(self):
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False, timeout=30)
@@ -80,12 +97,26 @@ class CacheDB:
         self._conn.row_factory = sqlite3.Row
 
     def _reconnect(self):
-        """Reconnect if the connection is stale (e.g. DB file was deleted)."""
+        """Reconnect. If the DB file is corrupted, delete and recreate it."""
         try:
             self._conn.close()
         except Exception:
             pass
-        self._connect()
+        # If the DB file is corrupted, remove it so we start fresh
+        try:
+            self._connect()
+            self._conn.execute("SELECT 1 FROM cache_meta LIMIT 1")
+        except (sqlite3.DatabaseError, sqlite3.OperationalError):
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.remove(self._db_path + suffix)
+                except OSError:
+                    pass
+            self._connect()
         self._init_schema()
 
     def _init_schema(self):
@@ -162,27 +193,28 @@ class CacheDB:
 
     def store_catalogs(self, merchant_bm_id: str, catalogs: List[Dict]):
         now = time.time()
-        # Clear old entries for this merchant
-        self._conn.execute(
-            "DELETE FROM catalogs WHERE merchant_bm_id = ?", (merchant_bm_id,)
-        )
-        for c in catalogs:
+        with self._lock:
+            # Clear old entries for this merchant
             self._conn.execute(
-                """INSERT OR REPLACE INTO catalogs
-                   (id, name, product_count, vertical, is_catalog_segment, merchant_bm_id, fetched_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    c.get("id"),
-                    c.get("name"),
-                    c.get("product_count"),
-                    c.get("vertical"),
-                    1 if c.get("is_catalog_segment") else 0,
-                    merchant_bm_id,
-                    now,
-                ),
+                "DELETE FROM catalogs WHERE merchant_bm_id = ?", (merchant_bm_id,)
             )
-        self._set_meta(f"catalogs:{merchant_bm_id}")
-        self._conn.commit()
+            for c in catalogs:
+                self._conn.execute(
+                    """INSERT OR REPLACE INTO catalogs
+                       (id, name, product_count, vertical, is_catalog_segment, merchant_bm_id, fetched_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        c.get("id"),
+                        c.get("name"),
+                        c.get("product_count"),
+                        c.get("vertical"),
+                        1 if c.get("is_catalog_segment") else 0,
+                        merchant_bm_id,
+                        now,
+                    ),
+                )
+            self._set_meta(f"catalogs:{merchant_bm_id}")
+            self._conn.commit()
 
     # ------------------------------------------------------------------
     # Partnerships
@@ -224,28 +256,29 @@ class CacheDB:
         self, catalog_id: str, catalog_name: str, partnerships: List[Dict]
     ):
         now = time.time()
-        # Clear old entries for this catalog
-        self._conn.execute(
-            "DELETE FROM partnerships WHERE catalog_id = ?", (catalog_id,)
-        )
-        for p in partnerships:
+        with self._lock:
+            # Clear old entries for this catalog
             self._conn.execute(
-                """INSERT OR REPLACE INTO partnerships
-                   (catalog_id, catalog_name, business_id, business_name,
-                    status, permitted_tasks, fetched_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    catalog_id,
-                    catalog_name,
-                    p.get("business_id"),
-                    p.get("business_name"),
-                    p.get("status"),
-                    json.dumps(p.get("permitted_tasks", [])),
-                    now,
-                ),
+                "DELETE FROM partnerships WHERE catalog_id = ?", (catalog_id,)
             )
-        self._set_meta(f"partnerships:{catalog_id}")
-        self._conn.commit()
+            for p in partnerships:
+                self._conn.execute(
+                    """INSERT OR REPLACE INTO partnerships
+                       (catalog_id, catalog_name, business_id, business_name,
+                        status, permitted_tasks, fetched_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        catalog_id,
+                        catalog_name,
+                        p.get("business_id"),
+                        p.get("business_name"),
+                        p.get("status"),
+                        json.dumps(p.get("permitted_tasks", [])),
+                        now,
+                    ),
+                )
+            self._set_meta(f"partnerships:{catalog_id}")
+            self._conn.commit()
 
     # ------------------------------------------------------------------
     # Invalidation
@@ -253,36 +286,40 @@ class CacheDB:
 
     def invalidate_segment(self, catalog_id: str):
         """Invalidate cache for a specific catalog segment."""
-        self._conn.execute(
-            "DELETE FROM cache_meta WHERE cache_key = ?",
-            (f"partnerships:{catalog_id}",),
-        )
-        self._conn.execute(
-            "DELETE FROM partnerships WHERE catalog_id = ?", (catalog_id,)
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM cache_meta WHERE cache_key = ?",
+                (f"partnerships:{catalog_id}",),
+            )
+            self._conn.execute(
+                "DELETE FROM partnerships WHERE catalog_id = ?", (catalog_id,)
+            )
+            self._conn.commit()
 
     def invalidate_all_partnerships(self):
         """Invalidate only partnership cache."""
-        self._conn.execute(
-            "DELETE FROM cache_meta WHERE cache_key LIKE 'partnerships:%'"
-        )
-        self._conn.execute("DELETE FROM partnerships")
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM cache_meta WHERE cache_key LIKE 'partnerships:%'"
+            )
+            self._conn.execute("DELETE FROM partnerships")
+            self._conn.commit()
 
     def invalidate_catalog_list(self):
         """Invalidate only the catalog list cache."""
-        self._conn.execute(
-            "DELETE FROM cache_meta WHERE cache_key LIKE 'catalogs:%'"
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM cache_meta WHERE cache_key LIKE 'catalogs:%'"
+            )
+            self._conn.commit()
 
     def invalidate_all(self):
         """Clear all cached data."""
-        self._conn.execute("DELETE FROM cache_meta")
-        self._conn.execute("DELETE FROM catalogs")
-        self._conn.execute("DELETE FROM partnerships")
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("DELETE FROM cache_meta")
+            self._conn.execute("DELETE FROM catalogs")
+            self._conn.execute("DELETE FROM partnerships")
+            self._conn.commit()
 
     def close(self):
         self._conn.close()
@@ -360,7 +397,7 @@ def cached_get_all_segment_partnerships(
     merchant_business_id: str,
     force_refresh: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
-    max_workers: int = 20,
+    max_workers: int = 10,
 ) -> Tuple[List[Dict], Optional[str]]:
     """
     Get partnership status across all catalog segments with caching.
@@ -430,8 +467,11 @@ def cached_get_all_segment_partnerships(
                 if stale:
                     all_partnerships.extend(stale)
             else:
-                # Write to cache (serialized via SQLite WAL + timeout)
-                cache.store_partnerships(cat_id, cat_name, partnerships or [])
+                # Write to cache (thread-safe via lock in store_partnerships)
+                try:
+                    cache.store_partnerships(cat_id, cat_name, partnerships or [])
+                except (sqlite3.OperationalError, sqlite3.DatabaseError):
+                    pass  # Skip cache write on DB error, data still returned
                 for p in (partnerships or []):
                     p["catalog_id"] = cat_id
                     p["catalog_name"] = cat_name
@@ -455,7 +495,7 @@ def invalidate_segment_cache(catalog_id: str):
     cache = get_cache()
     try:
         cache.invalidate_segment(catalog_id)
-    except sqlite3.OperationalError:
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
         cache._reconnect()
         cache.invalidate_segment(catalog_id)
 
@@ -465,7 +505,7 @@ def invalidate_all_partnerships():
     cache = get_cache()
     try:
         cache.invalidate_all_partnerships()
-    except sqlite3.OperationalError:
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
         cache._reconnect()
         cache.invalidate_all_partnerships()
 
@@ -475,7 +515,7 @@ def invalidate_catalog_list():
     cache = get_cache()
     try:
         cache.invalidate_catalog_list()
-    except sqlite3.OperationalError:
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
         cache._reconnect()
         cache.invalidate_catalog_list()
 
@@ -485,6 +525,6 @@ def force_refresh_all():
     cache = get_cache()
     try:
         cache.invalidate_all()
-    except sqlite3.OperationalError:
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
         cache._reconnect()
         cache.invalidate_all()
