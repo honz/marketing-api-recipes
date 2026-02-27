@@ -55,7 +55,7 @@ fi
 # -------------------------------------------------------
 echo "Installing dependencies..."
 venv/bin/pip install --quiet --upgrade pip
-venv/bin/pip install --quiet streamlit pandas requests
+venv/bin/pip install --quiet streamlit pandas requests extra-streamlit-components
 
 # -------------------------------------------------------
 # 4. Copy config template if needed
@@ -67,6 +67,13 @@ else
     echo "merchant_platform/config.py already exists, skipping."
 fi
 
+if [ ! -f "brand_portal/config.py" ]; then
+    cp brand_portal/config.example.py brand_portal/config.py
+    echo "Created brand_portal/config.py from template."
+else
+    echo "brand_portal/config.py already exists, skipping."
+fi
+
 # -------------------------------------------------------
 # Done
 # -------------------------------------------------------
@@ -75,4 +82,8 @@ echo "Setup complete!"
 echo ""
 echo "Next steps:"
 echo "  1. Edit merchant_platform/config.py with your ACCESS_TOKEN and MERCHANT_BUSINESS_ID"
-echo "  2. Run:  ./run.sh"
+echo "  2. Run:  ./run.sh              (Merchant Platform on port 8501)"
+echo ""
+echo "  For the Brand Dashboard:"
+echo "  1. Edit brand_portal/config.py with the same merchant credentials"
+echo "  2. Run:  ./run_brand.sh        (Brand Dashboard on port 8502)"
