@@ -11,6 +11,6 @@ cpas_demos/agency_platform/config.py
 cpas_demos/brand_portal/config.py
 
 # CPAS SQLite cache (auto-generated at runtime)
-cpas_demos/merchant_platform/.cpas_cache.db
+cpas_demos/shared/.cpas_cache.db
 *.db-shm
 *.db-wal

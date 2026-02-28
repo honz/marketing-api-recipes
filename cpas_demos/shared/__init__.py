@@ -2,6 +2,7 @@
 Shared modules for CPAS demos.
 """
 
+from .cache_db import CacheDB
 from .constants import (
     GRAPH_API_VERSION,
     GRAPH_API_BASE_URL,
@@ -21,6 +22,17 @@ from .merchants import (
     get_merchant_by_business_id,
     list_all_merchants,
     list_active_merchants,
+)
+from .cache_manager import (
+    init_cache,
+    get_cache,
+    cached_get_owned_product_catalogs,
+    cached_get_all_segment_partnerships,
+    has_cached_partnerships,
+    invalidate_segment_cache,
+    invalidate_all_partnerships,
+    invalidate_catalog_list,
+    force_refresh_all,
 )
 from .cpas_api_client import (
     make_api_request,

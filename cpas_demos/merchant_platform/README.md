@@ -46,11 +46,11 @@ The dashboard opens in your browser at `http://localhost:8501`.
 
 ### Dashboard
 
-Overview of your CPAS partnership stats: pending requests, accepted partners, catalog segment count, and total partnerships. Partnership data is loaded on-demand to avoid slow startups.
+Overview of your CPAS partnership stats: pending requests, accepted partners, catalog segment count, and total partnerships. Partnership data is loaded on-demand to avoid slow startups. All data is cached in a shared SQLite database (`shared/.cpas_cache.db`) so the brand portal can read it instantly without redundant API calls.
 
 ### Pending Requests
 
-View brands that have been shared a catalog segment but haven't accepted yet. Filter by status (Pending / Accepted / All) and refresh to check for updates.
+View brands that have been shared a catalog segment but haven't accepted yet. Filter by status (Pending / Accepted / All) and refresh to re-fetch from the API. Refresh buttons on all tabs re-fetch partnership data with a progress indicator.
 
 ### Active Partners
 
@@ -74,6 +74,6 @@ View all your catalog segments and full catalogs with product counts. Segments a
 
 **No catalog segments found** — Your Business Manager may not own any product catalogs, or the catalogs may not have segments yet. Use the Create & Share tab to create one.
 
-**Partnership data loading is slow** — The platform checks each catalog segment for partnerships via two API calls per segment. This is done in parallel but can be slow with many segments. Data is cached locally after the first load.
+**Partnership data loading is slow** — The platform checks each catalog segment for partnerships via two API calls per segment. This is done in parallel but can be slow with many segments. Data is cached in a shared SQLite database after the first load and only stale segments are re-fetched on subsequent refreshes.
 
 **Port 8501 already in use** — Another Streamlit app is running. Stop it or run with a different port: `streamlit run merchant_platform/merchant_cpas_ui.py --server.port 8502`

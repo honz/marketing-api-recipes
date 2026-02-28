@@ -192,6 +192,16 @@ def main():
             with col_refresh:
                 if st.button("🔄 Refresh All", key="refresh_dashboard"):
                     force_refresh_all()
+                    # Re-fetch partnership data so the dashboard doesn't
+                    # fall back to the "not loaded" placeholder state.
+                    progress_bar = st.progress(0, text="Refreshing partnerships…")
+                    def _refresh_progress(done, total):
+                        progress_bar.progress(done / total, text=f"Checking segment {done}/{total}…")
+                    cached_get_all_segment_partnerships(
+                        access_token, merchant_bm_id,
+                        force_refresh=True, progress_callback=_refresh_progress,
+                    )
+                    progress_bar.empty()
                     st.rerun()
 
             # Catalog stats (cheap — cached)
@@ -285,6 +295,14 @@ def main():
             with col2:
                 if st.button("🔄 Refresh", key="refresh_requests"):
                     invalidate_all_partnerships()
+                    progress_bar = st.progress(0, text="Refreshing partnerships…")
+                    def _refresh_progress_tab2(done, total):
+                        progress_bar.progress(done / total, text=f"Checking segment {done}/{total}…")
+                    cached_get_all_segment_partnerships(
+                        access_token, merchant_bm_id,
+                        force_refresh=True, progress_callback=_refresh_progress_tab2,
+                    )
+                    progress_bar.empty()
                     st.rerun()
 
             if not has_cached_partnerships():
@@ -350,6 +368,14 @@ def main():
             with col_refresh:
                 if st.button("🔄 Refresh", key="refresh_partners"):
                     invalidate_all_partnerships()
+                    progress_bar = st.progress(0, text="Refreshing partnerships…")
+                    def _refresh_progress_tab3(done, total):
+                        progress_bar.progress(done / total, text=f"Checking segment {done}/{total}…")
+                    cached_get_all_segment_partnerships(
+                        access_token, merchant_bm_id,
+                        force_refresh=True, progress_callback=_refresh_progress_tab3,
+                    )
+                    progress_bar.empty()
                     st.rerun()
 
             if not has_cached_partnerships():

@@ -8,7 +8,7 @@ Streamlit-based demo applications for [Collaborative Ads (CPAS)](https://www.fac
 |----------|-------------|--------|
 | [Merchant Platform](merchant_platform/) | Merchants manage brand partnerships, create catalog segments, and share them with brands | Available |
 | Agency Platform | Agencies onboard brand partners with CPAS merchants | Coming soon |
-| Brand Portal | Brands discover merchants and request catalog access | Coming soon |
+| [Brand Portal](brand_portal/) | Brands view partnership status, request catalog access, and browse shared segments | Available |
 
 ## Prerequisites
 
@@ -21,7 +21,9 @@ Streamlit-based demo applications for [Collaborative Ads (CPAS)](https://www.fac
 cd cpas_demos
 ./install.sh          # creates venv, installs dependencies
 # edit merchant_platform/config.py with your credentials
-./run.sh              # launches the Merchant Platform
+./run.sh              # launches the Merchant Platform (port 8501)
+# edit brand_portal/config.py with merchant credentials
+./run_brand.sh        # launches the Brand Dashboard (port 8502)
 ```
 
 See each platform's README for detailed setup instructions.
@@ -31,16 +33,25 @@ See each platform's README for detailed setup instructions.
 ```
 cpas_demos/
 ├── install.sh                         # Setup script (venv + deps)
-├── run.sh                             # Launch script
-├── config.example.py                  # Shared config template
+├── run.sh                             # Launch merchant platform
+├── run_brand.sh                       # Launch brand dashboard
 ├── merchant_platform/
 │   ├── config.example.py              # Merchant-specific config template
 │   ├── merchant_cpas_ui.py            # Streamlit UI
 │   ├── merchant_cpas_backend.py       # Backend logic
 │   ├── cache.py                       # SQLite cache layer
 │   └── README.md                      # Merchant platform docs
+├── brand_portal/
+│   ├── config.example.py              # Brand portal config template
+│   ├── brand_dashboard_ui.py          # Streamlit UI
+│   ├── brand_dashboard_backend.py     # Backend logic
+│   ├── cache.py                       # Session-state + SQLite cache layer
+│   └── README.md                      # Brand portal docs
 ├── shared/
+│   ├── __init__.py                    # Re-exports for shared modules
 │   ├── cpas_api_client.py             # Graph API wrapper
+│   ├── cache_db.py                    # SQLite database (shared between platforms)
+│   ├── cache_manager.py               # Cached API functions with SQLite backing
 │   ├── merchants.py                   # Merchant configurations
 │   └── constants.py                   # Constants and enums
 └── tests/
