@@ -7,7 +7,7 @@ Streamlit-based demo applications for [Collaborative Ads (CPAS)](https://www.fac
 | Platform | Description | Status |
 |----------|-------------|--------|
 | [Merchant Platform](merchant_platform/) | Merchants manage brand partnerships, create catalog segments, and share them with brands | Available |
-| Agency Platform | Agencies onboard brand partners with CPAS merchants | Coming soon |
+| [Agency Platform](agency_platform/) | Agencies onboard brand partners, manage collaboration requests, and create CPAS campaigns | Available |
 | [Brand Portal](brand_portal/) | Brands view partnership status, request catalog access, and browse shared segments | Available |
 
 ## Prerequisites
@@ -47,6 +47,9 @@ cpas_demos/
 │   ├── brand_dashboard_backend.py     # Backend logic
 │   ├── cache.py                       # Session-state + SQLite cache layer
 │   └── README.md                      # Brand portal docs
+├── agency_platform/
+│   ├── agency_cpas_ui.py              # Streamlit UI
+│   └── agency_cpas_backend.py         # Backend logic
 ├── shared/
 │   ├── __init__.py                    # Re-exports for shared modules
 │   ├── cpas_api_client.py             # Graph API wrapper
