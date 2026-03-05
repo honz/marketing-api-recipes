@@ -184,6 +184,222 @@ class TestFetchMediaInsights:
         assert result["comments"] is None
 
 
+class TestFetchPageOfAdvertisableMedias:
+    """Tests for fetch_page_of_advertisable_medias function (pagination support)"""
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_first_page_success(
+        self,
+        mock_get,
+        mock_access_token,
+        mock_ig_account_id,
+        sample_media_response,
+    ):
+        """Test fetching the first page without cursor"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            **sample_media_response,
+            "paging": {"next": "https://graph.facebook.com/v22.0/next_page"}
+        }
+        mock_get.return_value = mock_response
+
+        medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
+            mock_access_token,
+            mock_ig_account_id,
+        )
+
+        assert len(medias) == 2
+        assert medias[0]["id"] == "media_123"
+        assert next_cursor == "https://graph.facebook.com/v22.0/next_page"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_with_cursor(
+        self,
+        mock_get,
+        mock_access_token,
+        mock_ig_account_id,
+    ):
+        """Test fetching subsequent page with cursor"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": [
+                {
+                    "id": "media_789",
+                    "permalink": "https://instagram.com/p/789",
+                    "owner_id": "owner_789",
+                    "has_permission_for_partnership_ad": True,
+                    "eligibility_errors": [],
+                }
+            ],
+            "paging": {}
+        }
+        mock_get.return_value = mock_response
+
+        cursor_url = "https://graph.facebook.com/v22.0/next_page?cursor=abc123"
+        medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
+            mock_access_token,
+            mock_ig_account_id,
+            cursor=cursor_url,
+        )
+
+        assert len(medias) == 1
+        assert medias[0]["id"] == "media_789"
+        assert next_cursor is None  # No more pages
+        # Verify cursor URL was used directly
+        mock_get.assert_called_once()
+        call_args = mock_get.call_args
+        assert call_args[0][0] == cursor_url
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_last_page_no_next_cursor(
+        self,
+        mock_get,
+        mock_access_token,
+        mock_ig_account_id,
+        sample_media_response,
+    ):
+        """Test that last page returns None for next_cursor"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = sample_media_response  # No paging.next
+        mock_get.return_value = mock_response
+
+        medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
+            mock_access_token,
+            mock_ig_account_id,
+        )
+
+        assert len(medias) == 2
+        assert next_cursor is None
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_with_creator_username(
+        self,
+        mock_get,
+        mock_access_token,
+        mock_ig_account_id,
+        mock_creator_username,
+        sample_media_response,
+    ):
+        """Test that creator_username is passed as parameter"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = sample_media_response
+        mock_get.return_value = mock_response
+
+        partnership_ads_booster.fetch_page_of_advertisable_medias(
+            mock_access_token,
+            mock_ig_account_id,
+            creator_username=mock_creator_username,
+        )
+
+        call_args = mock_get.call_args
+        assert call_args[1]["params"]["creator_username"] == mock_creator_username
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_with_permission_filter(
+        self,
+        mock_get,
+        mock_access_token,
+        mock_ig_account_id,
+    ):
+        """Test that only_with_permission filters results"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": [
+                {
+                    "id": "media_1",
+                    "permalink": "https://instagram.com/p/1",
+                    "owner_id": "owner_1",
+                    "has_permission_for_partnership_ad": True,
+                    "eligibility_errors": [],
+                },
+                {
+                    "id": "media_2",
+                    "permalink": "https://instagram.com/p/2",
+                    "owner_id": "owner_2",
+                    "has_permission_for_partnership_ad": False,
+                    "eligibility_errors": [],
+                },
+            ],
+            "paging": {}
+        }
+        mock_get.return_value = mock_response
+
+        medias, _ = partnership_ads_booster.fetch_page_of_advertisable_medias(
+            mock_access_token,
+            mock_ig_account_id,
+            only_with_permission=True,
+        )
+
+        assert len(medias) == 1
+        assert medias[0]["id"] == "media_1"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_api_error_returns_empty(
+        self,
+        mock_get,
+        mock_access_token,
+        mock_ig_account_id,
+    ):
+        """Test that API errors return empty list and None cursor"""
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = "Bad Request"
+        mock_get.return_value = mock_response
+
+        medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
+            mock_access_token,
+            mock_ig_account_id,
+        )
+
+        assert medias == []
+        assert next_cursor is None
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_request_exception_returns_empty(
+        self,
+        mock_get,
+        mock_access_token,
+        mock_ig_account_id,
+    ):
+        """Test that request exceptions return empty list and None cursor"""
+        import requests
+        mock_get.side_effect = requests.exceptions.RequestException("Connection error")
+
+        medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
+            mock_access_token,
+            mock_ig_account_id,
+        )
+
+        assert medias == []
+        assert next_cursor is None
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_empty_data_returns_empty_list(
+        self,
+        mock_get,
+        mock_access_token,
+        mock_ig_account_id,
+    ):
+        """Test that empty data response returns empty list"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": [], "paging": {}}
+        mock_get.return_value = mock_response
+
+        medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
+            mock_access_token,
+            mock_ig_account_id,
+        )
+
+        assert medias == []
+        assert next_cursor is None
+
+
 class TestFetchAllAdvertisableMedias:
     """Tests for fetch_all_advertisable_medias function"""
 

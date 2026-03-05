@@ -13,16 +13,34 @@ $source venv/bin/activate
 $pip install requests
 $python3 partnership_ads_booster.py --mode fetch --access-token YOUR_TOKEN --ig-account-id YOUR_IG_ID --creator-username CREATOR_USERNAME
 $python3 partnership_ads_booster.py --mode create --access-token YOUR_TOKEN --input-csv input.csv --ig-account-id YOUR_IG_ID --ad-account-id YOUR_AD_ID --facebook-page-id YOUR_PAGE_ID
+
+Optional flags:
+--no-ssl-verify    Disable SSL certificate verification (use for testing/development only)
+
+For Streamlit UI, set environment variable before running:
+SSL_VERIFY=false streamlit run partnership_ads_ui.py
 """
 
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 from typing import Dict, List, Optional, Tuple
 
 import requests
+
+
+def get_ssl_verify_from_env() -> bool:
+    """
+    Get SSL verification setting from environment variable.
+
+    Returns:
+        True if SSL should be verified (default), False otherwise
+    """
+    env_value = os.environ.get("SSL_VERIFY", "true").lower()
+    return env_value not in ("false", "0", "no", "off")
 
 
 def extract_instagram_shortcode(permalink: str) -> str:
@@ -98,7 +116,7 @@ def fetch_account_level_permissions(
 
     try:
         while True:
-            response = requests.get(url, headers=headers, params=params)
+            response = requests.get(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
 
             if response.status_code != 200:
                 print(f"Error: {response.status_code} - {response.text}")
@@ -189,8 +207,7 @@ def request_account_level_permission(
         data["creator_instagram_username"] = creator_instagram_username
 
     try:
-        response = requests.post(url, headers=headers, json=data)
-
+        response = requests.post(url, headers=headers, json=data, verify=get_ssl_verify_from_env())
         if response.status_code == 200:
             result = response.json()
             return {"success": result.get("success", True), "error": None}
@@ -330,7 +347,7 @@ def fetch_media_insights(
     try:
         media_url = f"https://graph.facebook.com/v22.0/{media_id}"
         media_params = {"fields": "like_count,comments_count"}
-        response = requests.get(media_url, headers=headers, params=media_params)
+        response = requests.get(media_url, headers=headers, params=media_params, verify=get_ssl_verify_from_env())
         if response.status_code == 200:
             data = response.json()
             result["likes"] = data.get("like_count")
@@ -339,6 +356,86 @@ def fetch_media_insights(
         print(f"Warning: Failed to fetch metrics for media {media_id}: {e}")
 
     return result
+
+
+class APIError(Exception):
+    """Exception raised for API errors that should be retried."""
+    def __init__(self, status_code: int, message: str):
+        self.status_code = status_code
+        self.message = message
+        super().__init__(f"API Error {status_code}: {message}")
+
+
+def fetch_page_of_advertisable_medias(
+    access_token: str,
+    ig_account_id: str,
+    creator_username: Optional[str] = None,
+    cursor: Optional[str] = None,
+    limit: int = 25,
+    only_with_permission: bool = False,
+) -> Tuple[List[Dict], Optional[str]]:
+    """
+    Fetch a single page of advertisable medias for pagination support.
+
+    Args:
+        access_token: Facebook/Instagram access token
+        ig_account_id: Instagram account ID
+        creator_username: Instagram creator username (optional)
+        cursor: Pagination cursor from previous request (None for first page)
+        limit: Number of items per page (default 25, max 25)
+        only_with_permission: If True, only include medias with partnership ad permission
+
+    Returns:
+        Tuple of (list of media dicts, next_cursor or None if no more pages)
+
+    Raises:
+        APIError: If the API returns a 5xx error (should be retried)
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}",
+    }
+
+    # If we have a cursor, it's a full URL from the paging.next field
+    if cursor:
+        url = cursor
+        params = {}
+    else:
+        url = f"https://graph.facebook.com/v22.0/{ig_account_id}/branded_content_advertisable_medias"
+        params = {
+            "fields": "eligibility_errors,owner_id,permalink,id,has_permission_for_partnership_ad",
+            "limit": min(limit, 25),  # API max is 25
+        }
+        if creator_username:
+            params["creator_username"] = creator_username
+
+    response = requests.get(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
+
+    # Raise exception for server errors (5xx) so caller can retry
+    if response.status_code >= 500:
+        raise APIError(response.status_code, response.text)
+
+    # For client errors (4xx), return empty to signal end
+    if response.status_code != 200:
+        print(f"Error: {response.status_code} - {response.text}")
+        return [], None
+
+    response_data = response.json()
+    medias = response_data.get("data", [])
+
+    # Apply permission filter if requested
+    if only_with_permission:
+        medias = [
+            m for m in medias
+            if m.get("has_permission_for_partnership_ad", False)
+        ]
+
+    # Get next cursor
+    next_cursor = None
+    if "paging" in response_data and "next" in response_data["paging"]:
+        next_cursor = response_data["paging"]["next"]
+
+    return medias, next_cursor
 
 
 def fetch_all_advertisable_medias(
@@ -384,7 +481,7 @@ def fetch_all_advertisable_medias(
 
     try:
         while True:
-            response = requests.get(url, headers=headers, params=params)
+            response = requests.get(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
 
             if response.status_code != 200:
                 print(f"Error: {response.status_code} - {response.text}")
@@ -507,7 +604,7 @@ def fetch_branded_content_advertisable_medias(
     else:
         raise ValueError("ad_code or permalinks must be passed")
 
-    response = requests.get(url, headers=headers, params=params)
+    response = requests.get(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
     if response.status_code == 200:
         response_data = response.json()
         if "data" in response_data and len(response_data["data"]) > 0:
@@ -551,7 +648,7 @@ def upload_instagram_video(
         params["partnership_ad_ad_code"] = ad_code
         params["is_partnership_ad"] = True
 
-    response = requests.post(url, headers=headers, params=params)
+    response = requests.post(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
     if response.status_code == 200:
         response_data = response.json()
         if "id" in response_data:
@@ -662,7 +759,7 @@ def create_ad_creative(
         params["url_tags"] = utm_parameters
 
     try:
-        response = requests.post(url, headers=headers, params=params)
+        response = requests.post(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
         response_data = response.json()
         if response.status_code == 200:
             if "id" in response_data:
@@ -720,7 +817,7 @@ def create_ad(
         "creative": json.dumps({"creative_id": creative_id}),
     }
     try:
-        response = requests.post(url, headers=headers, params=params)
+        response = requests.post(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
         response_data = response.json()
         if response.status_code == 200:
             if "id" in response_data:
@@ -1066,8 +1163,18 @@ Examples:
         action="store_true",
         help="Include engagement metrics (likes, comments) - slower (fetch mode only)",
     )
+    parser.add_argument(
+        "--no-ssl-verify",
+        action="store_true",
+        help="Disable SSL certificate verification (use for testing/development only)",
+    )
 
     args = parser.parse_args()
+
+    # Set SSL verification based on command line argument
+    if args.no_ssl_verify:
+        os.environ["SSL_VERIFY"] = "false"
+        print("Warning: SSL certificate verification is disabled")
 
     if args.mode == "fetch":
         output_csv = args.output_csv or "advertisable_medias.csv"

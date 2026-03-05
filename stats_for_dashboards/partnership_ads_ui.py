@@ -10,12 +10,15 @@ $source venv/bin/activate
 $pip install requests
 $pip install streamlit pandas
 $streamlit run partnership_ads_ui.py
+
+For bulk export, use the CLI script:
+$python export_medias.py --access-token YOUR_TOKEN --ig-account-id YOUR_ID --include-metrics
 """
 
 import pandas as pd
 import streamlit as st
 from partnership_ads_booster import (
-    fetch_all_advertisable_medias,
+    fetch_page_of_advertisable_medias,
     create_partnership_ads_from_csv,
     fetch_account_level_permissions,
     bulk_request_account_level_permissions,
@@ -50,112 +53,259 @@ def main():
             result = result.replace(char, '')
         return result.strip()
 
+    # Initialize session state for credentials
+    if 'access_token' not in st.session_state:
+        st.session_state.access_token = ''
+    if 'ig_account_id' not in st.session_state:
+        st.session_state.ig_account_id = ''
+    if 'ad_account_id' not in st.session_state:
+        st.session_state.ad_account_id = ''
+    if 'fb_page_id' not in st.session_state:
+        st.session_state.fb_page_id = ''
+
+    # Callback functions to update session state
+    def save_access_token():
+        value = sanitize_input(st.session_state.access_token_input)
+        st.session_state.access_token = value
+
+    def save_ig_account_id():
+        value = sanitize_input(st.session_state.ig_account_id_input)
+        st.session_state.ig_account_id = value
+
     # Sidebar for common inputs
     st.sidebar.header("Authentication")
-    access_token = sanitize_input(st.sidebar.text_input(
+    st.sidebar.text_input(
         "Access Token",
         type="password",
         help="Your Facebook/Instagram access token",
-    ))
-    ig_account_id = sanitize_input(st.sidebar.text_input(
+        key="access_token_input",
+        value=st.session_state.access_token,
+        on_change=save_access_token
+    )
+    st.sidebar.text_input(
         "Instagram Account ID",
         help="Your Instagram account ID",
-    ))
+        key="ig_account_id_input",
+        value=st.session_state.ig_account_id,
+        on_change=save_ig_account_id
+    )
+
+    # Get sanitized values from session state
+    access_token = st.session_state.access_token
+    ig_account_id = st.session_state.ig_account_id
 
     # Main tabs
-    tab1, tab2, tab3 = st.tabs(["📥 Fetch Medias", "🎯 Create Ads", "🔐 Bulk Request Permission"])
+    tab1, tab2, tab3 = st.tabs(["📥 Fetch Medias", "🔐 Bulk Request Permission", "🎯 Create Ads"])
 
-    # Tab 1: Fetch Advertisable Medias
+    # Tab 1: Fetch Advertisable Medias (Paginated)
     with tab1:
         st.header("Fetch Advertisable Medias")
         st.markdown(
-            "Download all advertisable medias with eligibility and permission information"
+            "Download advertisable medias with eligibility and permission information"
         )
 
-        with st.form("fetch_form"):
-            creator_username = st.text_input(
-                "Creator Username (Optional)",
-                help="Filter by creator username to avoid fetching too much data",
+        # Initialize session state for pagination
+        if 'fetch_medias_state' not in st.session_state:
+            st.session_state.fetch_medias_state = {
+                'medias': [],
+                'next_cursor': None,
+                'has_more': True,
+                'is_initialized': False,
+                'creator_username': None,
+                'only_with_permission': False,
+                'include_metrics': False,
+                'is_fetching': False,
+            }
+
+        state = st.session_state.fetch_medias_state
+
+        # Filter options in a form-like layout
+        creator_username = st.text_input(
+            "Creator Username (Optional)",
+            help="Filter by creator username to avoid fetching too much data",
+            key="fetch_creator_username"
+        )
+
+        only_with_permission = st.checkbox(
+            "Only fetch media with partnership ad permission",
+            value=False,
+            help="Filter to only include media where the advertiser has permission to create partnership ads",
+            key="fetch_only_permission"
+        )
+
+        include_metrics = st.checkbox(
+            "Include engagement metrics",
+            value=False,
+            help="Fetch likes and comments for each media (slower - requires additional API calls per media)",
+            key="fetch_include_metrics"
+        )
+
+        # Show hint if credentials not provided
+        if not access_token or not ig_account_id:
+            st.info("👈 Enter your Access Token and Instagram Account ID in the sidebar to enable fetching.")
+
+        # Action buttons row
+        col1, col2, col3 = st.columns([2, 2, 2])
+
+        with col1:
+            fetch_disabled = not access_token or not ig_account_id
+            fetch_clicked = st.button(
+                "🔄 Fetch Next 25" if state['is_initialized'] else "🔍 Fetch Medias",
+                disabled=fetch_disabled or (state['is_initialized'] and not state['has_more']),
+                type="primary",
+                use_container_width=True
             )
 
-            limit = st.number_input(
-                "Limit",
-                min_value=1,
-                value=25,
-                help="Maximum number of medias to fetch (default: 25).",
-            )
+        with col2:
+            if state['medias']:
+                # Convert to DataFrame for CSV export
+                export_data = []
+                for m in state['medias']:
+                    row = {
+                        'media_id': m.get('id', ''),
+                        'permalink': m.get('permalink', ''),
+                        'owner_id': m.get('owner_id', ''),
+                        'has_permission_for_partnership_ad': m.get('has_permission_for_partnership_ad', False),
+                        'eligibility_errors': str(m.get('eligibility_errors', [])),
+                    }
+                    # Include metrics columns if they exist
+                    if 'likes' in m:
+                        row['likes'] = m.get('likes')
+                    if 'comments' in m:
+                        row['comments'] = m.get('comments')
+                    export_data.append(row)
 
-            only_with_permission = st.checkbox(
-                "Only fetch media with partnership ad permission",
-                value=False,
-                help="Filter to only include media where the advertiser has permission to create partnership ads",
-            )
+                df_export = pd.DataFrame(export_data)
+                csv_data = df_export.to_csv(index=False)
+                st.download_button(
+                    label="⬇️ Download CSV",
+                    data=csv_data,
+                    file_name="advertisable_medias.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            else:
+                st.button("⬇️ Download CSV", disabled=True, use_container_width=True)
 
-            include_metrics = st.checkbox(
-                "Include engagement metrics",
-                value=False,
-                help="Fetch likes and comments for each media (slower - requires additional API calls)",
-            )
+        with col3:
+            if st.button("🗑️ Clear All", use_container_width=True, disabled=not state['medias']):
+                state['medias'] = []
+                state['next_cursor'] = None
+                state['has_more'] = True
+                state['is_initialized'] = False
+                st.rerun()
 
-            output_filename = st.text_input(
-                "Output Filename",
-                value="advertisable_medias.csv",
-                help="Name for the output CSV file",
-            )
-
-            submit_fetch = st.form_submit_button("🔍 Fetch Medias", type="primary")
-
-        if submit_fetch:
+        # Handle fetch action
+        if fetch_clicked:
             if not access_token or not ig_account_id:
                 st.error("❌ Please provide Access Token and Instagram Account ID")
             else:
-                with st.spinner("Fetching advertisable medias..."):
-                    try:
-                        # Show warning if metrics enabled
-                        if include_metrics:
-                            st.info("⏳ Fetching engagement metrics (likes, comments) requires additional API calls per media. This may take a while...")
+                # Check if filters changed - reset if so
+                if (state['is_initialized'] and
+                    (state['creator_username'] != (creator_username or None) or
+                     state['only_with_permission'] != only_with_permission or
+                     state['include_metrics'] != include_metrics)):
+                    state['medias'] = []
+                    state['next_cursor'] = None
+                    state['has_more'] = True
 
-                        # Use current directory for output
-                        temp_output = output_filename
-                        fetch_all_advertisable_medias(
+                # Update filter state
+                state['creator_username'] = creator_username if creator_username else None
+                state['only_with_permission'] = only_with_permission
+                state['include_metrics'] = include_metrics
+
+                with st.spinner("Fetching medias..." + (" (including metrics)" if include_metrics else "")):
+                    try:
+                        batch, next_cursor = fetch_page_of_advertisable_medias(
                             access_token,
                             ig_account_id,
-                            creator_username if creator_username else None,
-                            temp_output,
-                            limit if limit and limit > 0 else None,
-                            only_with_permission,
-                            include_metrics,
+                            creator_username=state['creator_username'],
+                            cursor=state['next_cursor'],
+                            limit=25,
+                            only_with_permission=state['only_with_permission'],
                         )
 
-                        # Read the CSV and display preview
-                        # Ensure ID columns are read as strings to prevent JavaScript integer overflow
-                        df = pd.read_csv(
-                            temp_output,
-                            dtype={
-                                'media_id': str,
-                                'owner_id': str,
-                            }
-                        )
-                        st.success(f"✅ Successfully fetched {len(df)} medias!")
+                        # Fetch engagement metrics if requested
+                        if include_metrics and batch:
+                            from partnership_ads_booster import fetch_media_insights
+                            for media in batch:
+                                media_id = media.get('id')
+                                if media_id:
+                                    metrics = fetch_media_insights(access_token, media_id)
+                                    media['likes'] = metrics.get('likes')
+                                    media['comments'] = metrics.get('comments')
 
-                        # Display preview
-                        st.subheader("Preview")
-                        st.dataframe(df, use_container_width=True)
-
-                        # Download button
-                        with open(temp_output, "rb") as f:
-                            st.download_button(
-                                label="⬇️ Download CSV",
-                                data=f.read(),
-                                file_name=output_filename,
-                                mime="text/csv",
-                            )
-
+                        state['medias'].extend(batch)
+                        state['next_cursor'] = next_cursor
+                        state['has_more'] = next_cursor is not None
+                        state['is_initialized'] = True
+                        st.rerun()
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
 
-    # Tab 2: Create Partnership Ads
-    with tab2:
+        # Display data
+        if state['medias']:
+            st.success(f"✅ Loaded {len(state['medias'])} medias")
+
+            # Convert to display DataFrame
+            display_data = []
+            for m in state['medias']:
+                row = {
+                    'media_id': m.get('id', ''),
+                    'permalink': m.get('permalink', ''),
+                    'owner_id': m.get('owner_id', ''),
+                    'has_permission': '✅' if m.get('has_permission_for_partnership_ad', False) else '❌',
+                    'eligibility_errors': str(m.get('eligibility_errors', [])) if m.get('eligibility_errors') else '',
+                }
+                # Include metrics columns if they exist
+                if 'likes' in m:
+                    row['likes'] = m.get('likes')
+                if 'comments' in m:
+                    row['comments'] = m.get('comments')
+                display_data.append(row)
+
+            df_display = pd.DataFrame(display_data)
+
+            # Build column config dynamically
+            column_config = {
+                "media_id": st.column_config.TextColumn("Media ID", width="medium"),
+                "permalink": st.column_config.LinkColumn("Permalink", width="large"),
+                "owner_id": st.column_config.TextColumn("Owner ID", width="medium"),
+                "has_permission": st.column_config.TextColumn("Permission", width="small"),
+                "eligibility_errors": st.column_config.TextColumn("Errors", width="medium"),
+            }
+            if 'likes' in df_display.columns:
+                column_config["likes"] = st.column_config.NumberColumn("Likes", width="small")
+            if 'comments' in df_display.columns:
+                column_config["comments"] = st.column_config.NumberColumn("Comments", width="small")
+
+            st.dataframe(
+                df_display,
+                height=400,
+                width='stretch',
+                column_config=column_config
+            )
+
+            # Status message
+            if state['has_more']:
+                st.info("📊 Click 'Fetch Next 25' to load more medias.")
+            else:
+                st.success("✅ All medias loaded!")
+        elif state['is_initialized']:
+            st.warning("No medias found matching your criteria.")
+
+        # CLI Export hint
+        st.divider()
+        st.info("""
+        **💡 Need to export all medias?** Use the CLI script for bulk exports:
+        ```
+        python export_medias.py --access-token YOUR_TOKEN --ig-account-id YOUR_ID --include-metrics
+        ```
+        Run `python export_medias.py --help` for all options.
+        """)
+
+    # Tab 3: Create Partnership Ads
+    with tab3:
         st.header("Create Partnership Ads")
         st.markdown("Bulk create partnership ads from a CSV file")
 
@@ -183,20 +333,28 @@ def main():
             """
             )
 
+        # Show hint if sidebar credentials not provided
+        if not access_token or not ig_account_id:
+            st.info("👈 Enter your Access Token and Instagram Account ID in the sidebar first.")
+
         with st.form("create_form"):
             col1, col2 = st.columns(2)
 
             with col1:
-                ad_account_id = sanitize_input(st.text_input(
+                ad_account_id = st.text_input(
                     "Ad Account ID",
                     help="Your Facebook ad account ID",
-                ))
+                    key="ad_account_id_input",
+                    value=st.session_state.ad_account_id,
+                )
 
             with col2:
-                facebook_page_id = sanitize_input(st.text_input(
+                facebook_page_id = st.text_input(
                     "Facebook Page ID",
                     help="Your Facebook page ID",
-                ))
+                    key="fb_page_id_input",
+                    value=st.session_state.fb_page_id,
+                )
 
             uploaded_file = st.file_uploader(
                 "Upload CSV File",
@@ -213,6 +371,13 @@ def main():
             submit_create = st.form_submit_button("🎯 Create Ads", type="primary")
 
         if submit_create:
+            # Save ad account and page IDs in session state
+            st.session_state.ad_account_id = sanitize_input(ad_account_id)
+            st.session_state.fb_page_id = sanitize_input(facebook_page_id)
+
+            ad_account_id = st.session_state.ad_account_id
+            facebook_page_id = st.session_state.fb_page_id
+
             if not access_token or not ig_account_id:
                 st.error("❌ Please provide Access Token and Instagram Account ID")
             elif not ad_account_id or not facebook_page_id:
@@ -239,7 +404,7 @@ def main():
                             }
                         )
                         st.subheader("Input CSV Preview")
-                        st.dataframe(input_df.head(10), use_container_width=True)
+                        st.dataframe(input_df.head(10), width='stretch')
                         st.info(f"📊 Total rows to process: {len(input_df)}")
 
                         # Create ads
@@ -282,7 +447,7 @@ def main():
 
                         # Show results table
                         st.subheader("Results")
-                        st.dataframe(results_df, use_container_width=True)
+                        st.dataframe(results_df, width='stretch')
 
                         # Show errors if any
                         if failed > 0:
@@ -290,7 +455,7 @@ def main():
                             failed_df = results_df[results_df["status"] == "failed"][
                                 ["ad_name", "ad_set_id", "error"]
                             ]
-                            st.dataframe(failed_df, use_container_width=True)
+                            st.dataframe(failed_df, width='stretch')
 
                         # Download button
                         with open(temp_output_create, "rb") as f:
@@ -311,8 +476,8 @@ def main():
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
 
-    # Tab 3: Bulk Request Permission
-    with tab3:
+    # Tab 2: Bulk Request Permission
+    with tab2:
         st.header("Bulk Request Permission")
         st.markdown(
             "View existing partnership ad permissions and request new permissions in bulk"
@@ -367,7 +532,7 @@ def main():
                                 st.metric("Total Permissions", len(permissions))
 
                                 # Display table
-                                st.dataframe(df, use_container_width=True)
+                                st.dataframe(df, width='stretch')
 
                                 # Download button
                                 with open(output_filename_permissions, "rb") as f:
@@ -467,7 +632,7 @@ def main():
                                 encoding="utf-8-sig",
                             )
                             st.subheader("Input CSV Preview")
-                            st.dataframe(input_df.head(10), use_container_width=True)
+                            st.dataframe(input_df.head(10), width='stretch')
 
                             # Check row limit
                             if len(input_df) > 100:
@@ -504,7 +669,7 @@ def main():
 
                                 # Show results table
                                 st.subheader("Results")
-                                st.dataframe(results_df, use_container_width=True)
+                                st.dataframe(results_df, width='stretch')
 
                                 # Show errors if any
                                 if failed > 0:
@@ -512,7 +677,7 @@ def main():
                                     failed_df = results_df[results_df["status"] == "failed"][
                                         ["creator_instagram_account", "creator_instagram_username", "error"]
                                     ]
-                                    st.dataframe(failed_df, use_container_width=True)
+                                    st.dataframe(failed_df, width='stretch')
 
                                 # Download button
                                 with open(output_filename_request, "rb") as f:
