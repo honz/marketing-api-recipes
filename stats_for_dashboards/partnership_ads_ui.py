@@ -324,6 +324,7 @@ def main():
 
             **Optional:**
             - `app_link`: CTA app link
+            - `app_id`: App ID for app events tracking
             - `product_set_id`: Product set ID
             - `utm_parameters`: UTM parameters in query string format (e.g., `utm_source=instagram&utm_medium=paid`)
             - `testimonial`: Testimonial text for the ad
