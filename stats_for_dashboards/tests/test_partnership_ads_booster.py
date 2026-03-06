@@ -1345,6 +1345,64 @@ class TestCreateAd:
         assert error is None
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_ad_without_app_id_no_tracking_specs(
+        self, mock_post, mock_access_token, mock_ad_account_id
+    ):
+        """Test that create_ad without app_id does not include tracking_specs"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "ad_123"}
+        mock_post.return_value = mock_response
+
+        ad_id, error = partnership_ads_booster.create_ad(
+            mock_access_token,
+            mock_ad_account_id,
+            "Test Ad",
+            "adset_123",
+            "creative_123",
+        )
+
+        assert ad_id == "ad_123"
+        assert error is None
+
+        # Verify tracking_specs is NOT in the params
+        call_args = mock_post.call_args
+        params = call_args.kwargs.get("params", {})
+        assert "tracking_specs" not in params
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_ad_with_app_id_includes_tracking_specs(
+        self, mock_post, mock_access_token, mock_ad_account_id
+    ):
+        """Test that create_ad with app_id includes proper tracking_specs for app events"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "ad_123"}
+        mock_post.return_value = mock_response
+
+        ad_id, error = partnership_ads_booster.create_ad(
+            mock_access_token,
+            mock_ad_account_id,
+            "Test Ad",
+            "adset_123",
+            "creative_123",
+            app_id="app_456",
+        )
+
+        assert ad_id == "ad_123"
+        assert error is None
+
+        # Verify tracking_specs is in the params with correct structure
+        call_args = mock_post.call_args
+        params = call_args.kwargs.get("params", {})
+        assert "tracking_specs" in params
+
+        tracking_specs = json.loads(params["tracking_specs"])
+        assert len(tracking_specs) == 1
+        assert tracking_specs[0]["action.type"] == "app_custom_event"
+        assert tracking_specs[0]["application"] == "app_456"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
     def test_create_ad_api_error(
         self, mock_post, mock_access_token, mock_ad_account_id
     ):
@@ -1363,7 +1421,7 @@ class TestCreateAd:
         )
 
         assert ad_id is None
-        assert "Bad Request" in error
+        assert error is not None and "Bad Request" in error
 
 
 class TestCreatePartnershipAdsFromCsv:

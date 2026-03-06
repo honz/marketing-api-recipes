@@ -791,6 +791,7 @@ def create_ad(
     ad_name: str,
     ad_set_id: str,
     creative_id: str,
+    app_id: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Create ad.
@@ -801,6 +802,7 @@ def create_ad(
         ad_name: Ad name
         ad_set_id: Ad set ID
         creative_id: Creative ID
+        app_id: App ID for app events tracking (optional)
 
     Returns:
         Tuple of (Ad ID or None, Error message or None)
@@ -816,6 +818,15 @@ def create_ad(
         "adset_id": ad_set_id,
         "creative": json.dumps({"creative_id": creative_id}),
     }
+
+    # Add tracking_specs for app events if app_id is provided
+    if app_id:
+        params["tracking_specs"] = json.dumps([
+            {
+                "action.type": "app_custom_event",
+                "application": app_id
+            }
+        ])
     try:
         response = requests.post(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
         response_data = response.json()
@@ -861,6 +872,7 @@ def create_partnership_ads_from_csv(
     - cta_type: Call to action type (e.g., "INSTALL_MOBILE_APP", "LEARN_MORE")
     - link: CTA link (mandatory)
     - app_link: CTA app link (optional)
+    - app_id: App ID for app events tracking (optional)
     - ad_name: Name for the ad
     - product_set_id (optional): Product set ID
     - utm_parameters (optional): UTM parameters in query string format (e.g., 'utm_source=instagram&utm_medium=paid')
@@ -901,6 +913,7 @@ def create_partnership_ads_from_csv(
             cta_type = row.get("cta_type")
             link = row.get("link")
             app_link = row.get("app_link", "")
+            app_id = row.get("app_id", "")
             ad_name = row.get("ad_name")
             ad_set_id = row.get("ad_set_id")
             product_set_id = row.get("product_set_id", "")
@@ -1059,7 +1072,8 @@ def create_partnership_ads_from_csv(
                     continue
 
                 published_ad_id, ad_error = create_ad(
-                    access_token, ad_account_id, ad_name, ad_set_id, creative_id
+                    access_token, ad_account_id, ad_name, ad_set_id, creative_id,
+                    app_id if app_id else None,
                 )
 
                 if not published_ad_id:
