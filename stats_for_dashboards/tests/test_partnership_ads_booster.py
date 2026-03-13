@@ -26,6 +26,11 @@ class TestExtractInstagramShortcode:
         result = partnership_ads_booster.extract_instagram_shortcode(url)
         assert result == "jKl789MnO"
 
+    def test_extract_from_reels_url(self):
+        url = "https://www.instagram.com/reels/DVd0eJEESn9/"
+        result = partnership_ads_booster.extract_instagram_shortcode(url)
+        assert result == "DVd0eJEESn9"
+
     def test_extract_from_url_without_https(self):
         url = "instagram.com/reel/pQr012StU/"
         result = partnership_ads_booster.extract_instagram_shortcode(url)

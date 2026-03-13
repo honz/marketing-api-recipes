@@ -49,6 +49,7 @@ def extract_instagram_shortcode(permalink: str) -> str:
 
     Handles two formats:
     1. Full URL: https://www.instagram.com/reel/aBc123XyZ/ -> aBc123XyZ
+       Also supports /reels/ URLs: https://www.instagram.com/reels/aBc123XyZ/
     2. Shortcode only: aBc123XyZ -> aBc123XyZ
 
     Args:
@@ -69,7 +70,7 @@ def extract_instagram_shortcode(permalink: str) -> str:
 
     # Check if it's a URL
     url_pattern = (
-        r"(?:https?://)?(?:www\.)?instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_-]+)"
+        r"(?:https?://)?(?:www\.)?instagram\.com/(?:p|reels?|tv)/([A-Za-z0-9_-]+)"
     )
     match = re.search(url_pattern, permalink)
 
