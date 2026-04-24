@@ -31,6 +31,10 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
+# Maps CSV identities values to API ad_format integers
+# 1 = both identities (default), 2 = first identity only, 3 = dynamic optimization
+IDENTITIES_MAP = {"both": 1, "first": 2, "dynamic": 3}
+
 
 def get_ssl_verify_from_env() -> bool:
     """
@@ -679,6 +683,7 @@ def create_ad_creative(
     utm_parameters: Optional[str] = None,
     testimonial: Optional[str] = None,
     source_url: Optional[str] = None,
+    identities: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Create ad creative.
@@ -697,6 +702,9 @@ def create_ad_creative(
         utm_parameters: UTM parameters in query string format (optional)
         testimonial: Testimonial text for the ad (optional)
         source_url: Source URL for the creative (optional)
+        identities: Controls which identities to display in the ad (optional).
+            Values (case insensitive): BOTH (default), FIRST, DYNAMIC.
+            Maps to ad_format in branded_content: BOTH=1, FIRST=2, DYNAMIC=3.
 
     Returns:
         Tuple of (Creative ID or None, Error message or None)
@@ -729,6 +737,12 @@ def create_ad_creative(
         branded_content["instagram_boost_post_access_token"] = ad_code
     if testimonial:
         branded_content["testimonial"] = testimonial
+    if identities:
+        ad_format = IDENTITIES_MAP.get(identities.strip().lower())
+        if ad_format is not None:
+            branded_content["ad_format"] = ad_format
+        else:
+            print(f"Warning: Unknown identities value '{identities}', ignoring. Valid values: BOTH, FIRST, DYNAMIC")
 
     if branded_content:
         params["branded_content"] = json.dumps(branded_content)
@@ -879,6 +893,8 @@ def create_partnership_ads_from_csv(
     - utm_parameters (optional): UTM parameters in query string format (e.g., 'utm_source=instagram&utm_medium=paid')
     - testimonial (optional): Testimonial text for the ad
     - source_url (optional): Source URL for the creative
+    - identities (optional): Controls which identities to display in the ad.
+      Values (case insensitive): BOTH (default, both identities), FIRST (first identity only), DYNAMIC (system optimizes)
 
     Args:
         access_token: Facebook/Instagram access token
@@ -921,6 +937,7 @@ def create_partnership_ads_from_csv(
             utm_parameters = row.get("utm_parameters", "")
             testimonial = row.get("testimonial", "")
             source_url = row.get("source_url", "")
+            identities = row.get("identities", "")
 
             required_fields = {
                 "cta_type": cta_type,
@@ -1060,6 +1077,7 @@ def create_partnership_ads_from_csv(
                     utm_parameters if utm_parameters else None,
                     testimonial if testimonial else None,
                     source_url if source_url else None,
+                    identities if identities else None,
                 )
 
                 if not creative_id:

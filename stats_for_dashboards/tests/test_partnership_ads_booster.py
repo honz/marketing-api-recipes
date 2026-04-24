@@ -1327,6 +1327,251 @@ class TestCreateAdCreative:
         assert creative_sourcing_spec["associated_product_set_id"] == "product_set_123"
         assert "degrees_of_freedom_spec" in params
 
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_identities_both(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that identities=BOTH sets ad_format=1 in branded_content"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            "test_ad_code",
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            identities="BOTH",
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+        assert "branded_content" in params
+        branded_content = json.loads(params["branded_content"])
+        assert branded_content["ad_format"] == 1
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_identities_first(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that identities=FIRST sets ad_format=2 in branded_content"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            "test_ad_code",
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            identities="FIRST",
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+        assert "branded_content" in params
+        branded_content = json.loads(params["branded_content"])
+        assert branded_content["ad_format"] == 2
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_identities_dynamic(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that identities=DYNAMIC sets ad_format=3 in branded_content"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            "test_ad_code",
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            identities="DYNAMIC",
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+        assert "branded_content" in params
+        branded_content = json.loads(params["branded_content"])
+        assert branded_content["ad_format"] == 3
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_identities_case_insensitive(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that identities values are case insensitive"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        for value in ["dynamic", "Dynamic", "DYNAMIC", " dynamic "]:
+            creative_id, error = partnership_ads_booster.create_ad_creative(
+                mock_access_token,
+                mock_ad_account_id,
+                mock_facebook_page_id,
+                mock_ig_account_id,
+                "media_123",
+                "test_ad_code",
+                "INSTALL_MOBILE_APP",
+                "https://app.link/install",
+                identities=value,
+            )
+
+            assert creative_id == "creative_123"
+            call_args = mock_post.call_args
+            branded_content = json.loads(call_args[1]["params"]["branded_content"])
+            assert branded_content["ad_format"] == 3, f"Failed for value: '{value}'"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_identities_and_ad_code(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that ad_format coexists with instagram_boost_post_access_token in branded_content"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            "test_ad_code",
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            testimonial="Great product!",
+            identities="FIRST",
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+        branded_content = json.loads(params["branded_content"])
+        assert branded_content["instagram_boost_post_access_token"] == "test_ad_code"
+        assert branded_content["testimonial"] == "Great product!"
+        assert branded_content["ad_format"] == 2
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_identities_only_no_ad_code(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that branded_content is sent when only identities is provided (no ad_code, no testimonial)"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,  # no ad_code
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            identities="DYNAMIC",
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+        assert "branded_content" in params
+        branded_content = json.loads(params["branded_content"])
+        assert branded_content["ad_format"] == 3
+        assert "instagram_boost_post_access_token" not in branded_content
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_invalid_identities(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that invalid identities values are ignored and ad_format is not set"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,  # no ad_code
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            identities="INVALID_VALUE",
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+        # No branded_content should be set (no ad_code, no testimonial, invalid identities)
+        assert "branded_content" not in params
+
 
 class TestCreateAd:
     """Tests for create_ad function"""
