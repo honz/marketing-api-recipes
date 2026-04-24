@@ -329,6 +329,7 @@ def main():
             - `utm_parameters`: UTM parameters in query string format (e.g., `utm_source=instagram&utm_medium=paid`)
             - `testimonial`: Testimonial text for the ad
             - `source_url`: Source URL for the creative
+            - `identities`: Controls which identities to display in the ad. Values (case insensitive): `BOTH` (default, both identities), `FIRST` (first identity only), `DYNAMIC` (system optimizes)
 
             **Note:** Stories URLs are not supported and will be rejected.
             """
