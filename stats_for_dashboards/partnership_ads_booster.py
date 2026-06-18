@@ -684,6 +684,7 @@ def create_ad_creative(
     testimonial: Optional[str] = None,
     source_url: Optional[str] = None,
     identities: Optional[str] = None,
+    multi_advertiser_ads: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Create ad creative.
@@ -705,6 +706,9 @@ def create_ad_creative(
         identities: Controls which identities to display in the ad (optional).
             Values (case insensitive): BOTH (default), FIRST, DYNAMIC.
             Maps to ad_format in branded_content: BOTH=1, FIRST=2, DYNAMIC=3.
+        multi_advertiser_ads: Controls multi-advertiser ads enrollment (optional).
+            Values (case insensitive): OPT_OUT (to disable multi-advertiser ads),
+            OPT_IN (to enable, default behavior).
 
     Returns:
         Tuple of (Creative ID or None, Error message or None)
@@ -769,6 +773,14 @@ def create_ad_creative(
         creative_sourcing_spec["source_url"] = source_url
     if creative_sourcing_spec:
         params["creative_sourcing_spec"] = json.dumps(creative_sourcing_spec)
+
+    # Add contextual_multi_ads parameter to control multi-advertiser ads
+    if multi_advertiser_ads:
+        enroll_status = multi_advertiser_ads.strip().upper()
+        if enroll_status in ("OPT_OUT", "OPT_IN"):
+            params["contextual_multi_ads"] = json.dumps({"enroll_status": enroll_status})
+        else:
+            print(f"Warning: Unknown multi_advertiser_ads value '{multi_advertiser_ads}', ignoring. Valid values: OPT_OUT, OPT_IN")
 
     if utm_parameters:
         params["url_tags"] = utm_parameters
@@ -895,6 +907,8 @@ def create_partnership_ads_from_csv(
     - source_url (optional): Source URL for the creative
     - identities (optional): Controls which identities to display in the ad.
       Values (case insensitive): BOTH (default, both identities), FIRST (first identity only), DYNAMIC (system optimizes)
+    - multi_advertiser_ads (optional): Controls multi-advertiser ads enrollment.
+      Values (case insensitive): OPT_OUT (to disable multi-advertiser ads), OPT_IN (to enable, default behavior)
 
     Args:
         access_token: Facebook/Instagram access token
@@ -938,6 +952,7 @@ def create_partnership_ads_from_csv(
             testimonial = row.get("testimonial", "")
             source_url = row.get("source_url", "")
             identities = row.get("identities", "")
+            multi_advertiser_ads = row.get("multi_advertiser_ads", "")
 
             required_fields = {
                 "cta_type": cta_type,
@@ -1078,6 +1093,7 @@ def create_partnership_ads_from_csv(
                     testimonial if testimonial else None,
                     source_url if source_url else None,
                     identities if identities else None,
+                    multi_advertiser_ads if multi_advertiser_ads else None,
                 )
 
                 if not creative_id:

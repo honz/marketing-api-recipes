@@ -1572,6 +1572,198 @@ class TestCreateAdCreative:
         # No branded_content should be set (no ad_code, no testimonial, invalid identities)
         assert "branded_content" not in params
 
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_multi_advertiser_ads_opt_out(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that multi_advertiser_ads=OPT_OUT sets contextual_multi_ads with enroll_status=OPT_OUT"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,  # no ad_code
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            multi_advertiser_ads="OPT_OUT",
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+        assert "contextual_multi_ads" in params
+        contextual_multi_ads = json.loads(params["contextual_multi_ads"])
+        assert contextual_multi_ads == {"enroll_status": "OPT_OUT"}
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_multi_advertiser_ads_opt_in(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that multi_advertiser_ads=OPT_IN sets contextual_multi_ads with enroll_status=OPT_IN"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,  # no ad_code
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            multi_advertiser_ads="OPT_IN",
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+        assert "contextual_multi_ads" in params
+        contextual_multi_ads = json.loads(params["contextual_multi_ads"])
+        assert contextual_multi_ads == {"enroll_status": "OPT_IN"}
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_multi_advertiser_ads_case_insensitive(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that multi_advertiser_ads values are case insensitive"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        test_cases = [
+            ("opt_out", "OPT_OUT"),
+            ("Opt_Out", "OPT_OUT"),
+            (" OPT_OUT ", "OPT_OUT"),
+            ("opt_in", "OPT_IN"),
+            ("Opt_In", "OPT_IN"),
+            (" OPT_IN ", "OPT_IN"),
+        ]
+
+        for input_value, expected_status in test_cases:
+            mock_post.reset_mock()
+            creative_id, error = partnership_ads_booster.create_ad_creative(
+                mock_access_token,
+                mock_ad_account_id,
+                mock_facebook_page_id,
+                mock_ig_account_id,
+                "media_123",
+                None,  # no ad_code
+                "INSTALL_MOBILE_APP",
+                "https://app.link/install",
+                multi_advertiser_ads=input_value,
+            )
+
+            assert creative_id == "creative_123"
+            assert error is None
+            call_args = mock_post.call_args
+            params = call_args[1]["params"]
+            assert "contextual_multi_ads" in params
+            contextual_multi_ads = json.loads(params["contextual_multi_ads"])
+            assert contextual_multi_ads == {"enroll_status": expected_status}
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_multi_advertiser_ads_and_other_params(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that multi_advertiser_ads works correctly with other parameters"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            "ad_code_123",  # ad_code
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            testimonial="Great product!",
+            identities="FIRST",
+            multi_advertiser_ads="OPT_OUT",
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+        # Check contextual_multi_ads is set
+        assert "contextual_multi_ads" in params
+        contextual_multi_ads = json.loads(params["contextual_multi_ads"])
+        assert contextual_multi_ads == {"enroll_status": "OPT_OUT"}
+        # Check branded_content has ad_format from identities
+        assert "branded_content" in params
+        branded_content = json.loads(params["branded_content"])
+        assert branded_content["ad_format"] == 2  # FIRST = 2
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_invalid_multi_advertiser_ads(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        """Test that invalid multi_advertiser_ads values are ignored"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,  # no ad_code
+            "INSTALL_MOBILE_APP",
+            "https://app.link/install",
+            multi_advertiser_ads="INVALID_VALUE",
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        call_args = mock_post.call_args
+        params = call_args[1]["params"]
+        # contextual_multi_ads should NOT be set for invalid value
+        assert "contextual_multi_ads" not in params
+
 
 class TestCreateAd:
     """Tests for create_ad function"""

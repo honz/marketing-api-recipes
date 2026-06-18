@@ -330,6 +330,7 @@ def main():
             - `testimonial`: Testimonial text for the ad
             - `source_url`: Source URL for the creative
             - `identities`: Controls which identities to display in the ad. Values (case insensitive): `BOTH` (default, both identities), `FIRST` (first identity only), `DYNAMIC` (system optimizes)
+            - `multi_advertiser_ads`: Controls multi-advertiser ads enrollment. Values (case insensitive): `OPT_OUT` (to disable multi-advertiser ads), `OPT_IN` (to enable, default behavior)
 
             **Note:** Stories URLs are not supported and will be rejected.
             """
