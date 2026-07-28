@@ -36,28 +36,31 @@ from partnership_ads_booster import (
 
 def export_all_medias(
     access_token: str,
-    ig_account_id: str,
+    business_id: str,
+    ig_user_id: str,
     output_file: str,
     creator_username: Optional[str] = None,
     only_with_permission: bool = False,
     include_metrics: bool = False,
     delay_seconds: float = 30.0,
     max_retries: int = 6,
-    page_size: int = 25,
+    page_size: int = 50,
 ) -> None:
     """
     Export all advertisable medias to a CSV file.
+    Uses the Content Discovery API.
 
     Args:
         access_token: Facebook/Instagram access token
-        ig_account_id: Instagram account ID
+        business_id: Business ID (required for Content Discovery API)
+        ig_user_id: Instagram User ID
         output_file: Output CSV file path
         creator_username: Optional filter by creator username
         only_with_permission: Only include medias with permission granted
-        include_metrics: Include engagement metrics (likes, comments)
+        include_metrics: Include engagement metrics (now included by default via field expansion)
         delay_seconds: Delay between API calls for rate limiting (default: 30s)
         max_retries: Maximum retries for failed API calls (uses exponential backoff: 30s, 60s, 120s, 240s, 480s, 960s)
-        page_size: Number of items per page (default 25, try 10 if API is flaky)
+        page_size: Number of items per page (default 50, max 50)
     """
     all_medias = []
     cursor = None
@@ -66,7 +69,8 @@ def export_all_medias(
     max_consecutive_empty = 3
 
     print(f"Starting export at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Instagram Account ID: {ig_account_id}")
+    print(f"Business ID: {business_id}")
+    print(f"Instagram User ID: {ig_user_id}")
     print(f"Output file: {output_file}")
     print(f"Page size: {page_size}")
     if creator_username:
@@ -74,7 +78,7 @@ def export_all_medias(
     if only_with_permission:
         print("Only including medias with permission granted")
     if include_metrics:
-        print("Including engagement metrics (likes, comments)")
+        print("Including engagement metrics (likes, comments) - now included by default")
     print(f"Rate limit delay: {delay_seconds}s between API calls")
     print("-" * 50)
 
@@ -85,16 +89,17 @@ def export_all_medias(
         next_cursor = None
         recovered_from_error = False
 
-        # Debug: print the cursor URL being used
+        # Debug: print the cursor being used
         if cursor:
-            print(f"  [DEBUG] Next URL: {cursor}")
+            print(f"  [DEBUG] Cursor: {cursor}")
 
         # Retry logic for API calls with exponential backoff
         while retry_count < max_retries:
             try:
                 batch, next_cursor = fetch_page_of_advertisable_medias(
                     access_token=access_token,
-                    ig_account_id=ig_account_id,
+                    business_id=business_id,
+                    ig_user_id=ig_user_id,
                     creator_username=creator_username,
                     cursor=cursor,
                     limit=page_size,
@@ -219,23 +224,23 @@ def export_all_medias(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Export all advertisable medias from an Instagram account",
+        description="Export all advertisable medias from an Instagram account using Content Discovery API",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
     # Basic export
-    python export_medias.py --access-token YOUR_TOKEN --ig-account-id YOUR_ID
+    python export_medias.py --access-token YOUR_TOKEN --business-id YOUR_BIZ_ID --ig-user-id YOUR_IG_ID
 
     # With filters and metrics
-    python export_medias.py --access-token YOUR_TOKEN --ig-account-id YOUR_ID \\
+    python export_medias.py --access-token YOUR_TOKEN --business-id YOUR_BIZ_ID --ig-user-id YOUR_IG_ID \\
         --creator-username someuser --only-with-permission --include-metrics
 
     # Run in background
-    nohup python export_medias.py --access-token YOUR_TOKEN --ig-account-id YOUR_ID \\
+    nohup python export_medias.py --access-token YOUR_TOKEN --business-id YOUR_BIZ_ID --ig-user-id YOUR_IG_ID \\
         --output medias.csv > export.log 2>&1 &
 
     # Disable SSL verification
-    SSL_VERIFY=false python export_medias.py --access-token YOUR_TOKEN --ig-account-id YOUR_ID
+    SSL_VERIFY=false python export_medias.py --access-token YOUR_TOKEN --business-id YOUR_BIZ_ID --ig-user-id YOUR_IG_ID
         """,
     )
 
@@ -245,9 +250,19 @@ Examples:
         help="Facebook/Instagram access token",
     )
     parser.add_argument(
-        "--ig-account-id",
+        "--business-id",
         required=True,
-        help="Instagram account ID",
+        help="Business ID (required for Content Discovery API)",
+    )
+    parser.add_argument(
+        "--ig-user-id",
+        required=True,
+        help="Instagram User ID",
+    )
+    # Keep --ig-account-id for backward compatibility (maps to ig-user-id)
+    parser.add_argument(
+        "--ig-account-id",
+        help="Instagram account ID (deprecated, use --ig-user-id)",
     )
     parser.add_argument(
         "--output",
@@ -268,13 +283,13 @@ Examples:
     parser.add_argument(
         "--include-metrics",
         action="store_true",
-        help="Include engagement metrics (likes, comments)",
+        help="Include engagement metrics (now included by default via field expansion)",
     )
     parser.add_argument(
         "--page-size",
         type=int,
-        default=25,
-        help="Items per page (default: 25, try 10 if API is flaky)",
+        default=50,
+        help="Items per page (default: 50, max 50)",
     )
     parser.add_argument(
         "--delay",
@@ -291,6 +306,11 @@ Examples:
 
     args = parser.parse_args()
 
+    # Handle backward compatibility for --ig-account-id
+    ig_user_id = args.ig_user_id or args.ig_account_id
+    if not ig_user_id:
+        parser.error("--ig-user-id (or --ig-account-id for backward compatibility) is required")
+
     # Generate default output filename if not provided
     output_file = args.output
     if not output_file:
@@ -300,7 +320,8 @@ Examples:
     try:
         export_all_medias(
             access_token=args.access_token,
-            ig_account_id=args.ig_account_id,
+            business_id=args.business_id,
+            ig_user_id=ig_user_id,
             output_file=output_file,
             creator_username=args.creator_username,
             only_with_permission=args.only_with_permission,

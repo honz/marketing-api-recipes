@@ -83,6 +83,11 @@ def mock_ig_account_id():
 
 
 @pytest.fixture
+def mock_business_id():
+    return "123456789012345"
+
+
+@pytest.fixture
 def mock_ad_account_id():
     return "1549883851784009"
 
@@ -807,7 +812,7 @@ class TestFetchBrandedContentAdvertisableMedias:
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
     def test_fetch_with_ad_code_success(
-        self, mock_get, mock_access_token, mock_ig_account_id
+        self, mock_get, mock_access_token, mock_business_id, mock_ig_account_id
     ):
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -823,7 +828,7 @@ class TestFetchBrandedContentAdvertisableMedias:
         mock_get.return_value = mock_response
 
         result = partnership_ads_booster.fetch_branded_content_advertisable_medias(
-            mock_access_token, mock_ig_account_id, ad_code="test_ad_code"
+            mock_access_token, mock_business_id, mock_ig_account_id, ad_code="test_ad_code"
         )
 
         assert result is not None
@@ -832,7 +837,7 @@ class TestFetchBrandedContentAdvertisableMedias:
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
     def test_fetch_with_permalinks_success(
-        self, mock_get, mock_access_token, mock_ig_account_id
+        self, mock_get, mock_access_token, mock_business_id, mock_ig_account_id
     ):
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -843,6 +848,7 @@ class TestFetchBrandedContentAdvertisableMedias:
 
         result = partnership_ads_booster.fetch_branded_content_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
             permalinks=["https://instagram.com/p/abc123"],
         )
@@ -851,22 +857,22 @@ class TestFetchBrandedContentAdvertisableMedias:
         assert result["id"] == "media_123"
 
     def test_fetch_without_ad_code_or_permalinks(
-        self, mock_access_token, mock_ig_account_id
+        self, mock_access_token, mock_business_id, mock_ig_account_id
     ):
-        with pytest.raises(ValueError, match="ad_code or permalinks must be passed"):
+        with pytest.raises(ValueError, match="ad_code, permalinks, or content_ids must be passed"):
             partnership_ads_booster.fetch_branded_content_advertisable_medias(
-                mock_access_token, mock_ig_account_id
+                mock_access_token, mock_business_id, mock_ig_account_id
             )
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
-    def test_fetch_api_error(self, mock_get, mock_access_token, mock_ig_account_id):
+    def test_fetch_api_error(self, mock_get, mock_access_token, mock_business_id, mock_ig_account_id):
         mock_response = MagicMock()
         mock_response.status_code = 400
         mock_response.text = "Bad Request"
         mock_get.return_value = mock_response
 
         result = partnership_ads_booster.fetch_branded_content_advertisable_medias(
-            mock_access_token, mock_ig_account_id, ad_code="test_ad_code"
+            mock_access_token, mock_business_id, mock_ig_account_id, ad_code="test_ad_code"
         )
 
         assert result == {"error": "Bad Request"}
@@ -1884,6 +1890,7 @@ class TestCreatePartnershipAdsFromCsv:
         mock_creative,
         mock_ad,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_ad_account_id,
         mock_facebook_page_id,
@@ -1908,6 +1915,7 @@ class TestCreatePartnershipAdsFromCsv:
 
         partnership_ads_booster.create_partnership_ads_from_csv(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
             mock_ad_account_id,
             mock_facebook_page_id,
@@ -1925,6 +1933,7 @@ class TestCreatePartnershipAdsFromCsv:
         self,
         mock_file,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_ad_account_id,
         mock_facebook_page_id,
@@ -1936,6 +1945,7 @@ class TestCreatePartnershipAdsFromCsv:
 
         partnership_ads_booster.create_partnership_ads_from_csv(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
             mock_ad_account_id,
             mock_facebook_page_id,
@@ -1948,6 +1958,7 @@ class TestCreatePartnershipAdsFromCsv:
         self,
         mock_file,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_ad_account_id,
         mock_facebook_page_id,
@@ -1955,6 +1966,7 @@ class TestCreatePartnershipAdsFromCsv:
         with pytest.raises(SystemExit) as exc_info:
             partnership_ads_booster.create_partnership_ads_from_csv(
                 mock_access_token,
+                mock_business_id,
                 mock_ig_account_id,
                 mock_ad_account_id,
                 mock_facebook_page_id,
@@ -1968,6 +1980,7 @@ class TestCreatePartnershipAdsFromCsv:
         self,
         mock_file,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_ad_account_id,
         mock_facebook_page_id,
@@ -1979,6 +1992,7 @@ class TestCreatePartnershipAdsFromCsv:
 
         partnership_ads_booster.create_partnership_ads_from_csv(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
             mock_ad_account_id,
             mock_facebook_page_id,
@@ -2001,6 +2015,8 @@ class TestMain:
             "test_token",
             "--ig-account-id",
             "123456",
+            "--business-id",
+            "999999",
             "--creator-username",
             "test_creator",
         ],
@@ -2022,6 +2038,8 @@ class TestMain:
             "test_token",
             "--ig-account-id",
             "123456",
+            "--business-id",
+            "999999",
             "--ad-account-id",
             "789",
             "--facebook-page-id",
@@ -2044,6 +2062,8 @@ class TestMain:
             "test_token",
             "--ig-account-id",
             "123456",
+            "--business-id",
+            "999999",
         ],
     )
     def test_main_create_mode_missing_args(self):
@@ -2062,6 +2082,8 @@ class TestMain:
             "test_token",
             "--ig-account-id",
             "123456",
+            "--business-id",
+            "999999",
             "--only-with-permission",
         ],
     )
@@ -2083,6 +2105,8 @@ class TestMain:
             "test_token",
             "--ig-account-id",
             "123456",
+            "--business-id",
+            "999999",
             "--include-metrics",
         ],
     )
@@ -2104,6 +2128,8 @@ class TestMain:
             "test_token",
             "--ig-account-id",
             "123456",
+            "--business-id",
+            "999999",
             "--only-with-permission",
             "--include-metrics",
         ],
