@@ -17,6 +17,7 @@ $python export_medias.py --access-token YOUR_TOKEN --ig-account-id YOUR_ID --inc
 
 import pandas as pd
 import streamlit as st
+from datetime import datetime, timedelta
 from partnership_ads_booster import (
     fetch_page_of_advertisable_medias,
     create_partnership_ads_from_csv,
@@ -53,11 +54,13 @@ def main():
             result = result.replace(char, '')
         return result.strip()
 
-    # Initialize session state for credentials
+# Initialize session state for credentials
     if 'access_token' not in st.session_state:
         st.session_state.access_token = ''
-    if 'ig_account_id' not in st.session_state:
-        st.session_state.ig_account_id = ''
+    if 'business_id' not in st.session_state:
+        st.session_state.business_id = ''
+    if 'ig_user_id' not in st.session_state:
+        st.session_state.ig_user_id = ''
     if 'ad_account_id' not in st.session_state:
         st.session_state.ad_account_id = ''
     if 'fb_page_id' not in st.session_state:
@@ -68,9 +71,13 @@ def main():
         value = sanitize_input(st.session_state.access_token_input)
         st.session_state.access_token = value
 
-    def save_ig_account_id():
-        value = sanitize_input(st.session_state.ig_account_id_input)
-        st.session_state.ig_account_id = value
+    def save_business_id():
+        value = sanitize_input(st.session_state.business_id_input)
+        st.session_state.business_id = value
+
+    def save_ig_user_id():
+        value = sanitize_input(st.session_state.ig_user_id_input)
+        st.session_state.ig_user_id = value
 
     # Sidebar for common inputs
     st.sidebar.header("Authentication")
@@ -83,16 +90,24 @@ def main():
         on_change=save_access_token
     )
     st.sidebar.text_input(
-        "Instagram Account ID",
-        help="Your Instagram account ID",
-        key="ig_account_id_input",
-        value=st.session_state.ig_account_id,
-        on_change=save_ig_account_id
+        "Business ID",
+        help="Your Business ID (required for Content Discovery API)",
+        key="business_id_input",
+        value=st.session_state.business_id,
+        on_change=save_business_id
+    )
+    st.sidebar.text_input(
+        "Instagram User ID",
+        help="Your Instagram User ID",
+        key="ig_user_id_input",
+        value=st.session_state.ig_user_id,
+        on_change=save_ig_user_id
     )
 
     # Get sanitized values from session state
     access_token = st.session_state.access_token
-    ig_account_id = st.session_state.ig_account_id
+    business_id = st.session_state.business_id
+    ig_user_id = st.session_state.ig_user_id
 
     # Main tabs
     tab1, tab2, tab3 = st.tabs(["📥 Fetch Medias", "🔐 Bulk Request Permission", "🎯 Create Ads"])
@@ -111,47 +126,114 @@ def main():
                 'next_cursor': None,
                 'has_more': True,
                 'is_initialized': False,
-                'creator_username': None,
-                'only_with_permission': False,
                 'include_metrics': False,
                 'is_fetching': False,
             }
 
         state = st.session_state.fetch_medias_state
 
-        # Filter options in a form-like layout
-        creator_username = st.text_input(
-            "Creator Username (Optional)",
-            help="Filter by creator username to avoid fetching too much data",
-            key="fetch_creator_username"
-        )
-
-        only_with_permission = st.checkbox(
-            "Only fetch media with partnership ad permission",
-            value=False,
-            help="Filter to only include media where the advertiser has permission to create partnership ads",
-            key="fetch_only_permission"
-        )
-
+        # Basic Filters - in a clean, organized layout
+        st.subheader("🔍 Basic Filters")
+        
         include_metrics = st.checkbox(
-            "Include engagement metrics",
+            "📊 Include engagement metrics",
             value=False,
-            help="Fetch likes and comments for each media (slower - requires additional API calls per media)",
+            help="Fetch likes, comments, views, and other engagement metrics",
             key="fetch_include_metrics"
         )
 
-        # Show hint if credentials not provided
-        if not access_token or not ig_account_id:
-            st.info("👈 Enter your Access Token and Instagram Account ID in the sidebar to enable fetching.")
+        # Advanced Filters - collapsible section
+        with st.expander("⚙️ Advanced Filters", expanded=False):
+            st.markdown("Refine your search with additional filters")
+            
+            # Search keywords
+            search_key = st.text_input(
+                "🔎 Search Keywords",
+                help="Search by keyword across caption text",
+                key="fetch_search_key",
+                placeholder="e.g., summer collection"
+            )
+            
+            st.markdown("---")
+            
+            # Filter columns
+            col1, col2 = st.columns(2)
+            with col1:
+                post_types = st.multiselect(
+                    "📱 Post Types",
+                    options=["FEED", "STORIES", "REELS"],
+                    help="Filter by post type",
+                    key="fetch_post_types"
+                )
+                
+            ad_eligibilities = st.multiselect(
+                    "✓ Ad Eligibility",
+                    options=["AD_READY", "INELIGIBLE", "NEEDS_ATTENTION", "EXCLUDED"],
+                    help="Filter by ad eligibility status",
+                    key="fetch_ad_eligibilities"
+                )
+            
+            with col2:
+                ad_usages = st.multiselect(
+                    "📈 Ad Usage",
+                    options=["NEVER_USED", "ACTIVE", "PREVIOUSLY_USED"],
+                    help="Filter by ad usage status",
+                    key="fetch_ad_usages"
+                )
+            
+            st.markdown("---")
+            
+            # Date range filter with shortcuts
+            st.markdown("**📅 Date Range**")
+            
+            # Date shortcut buttons
+            st.markdown("Quick selects:")
+            shortcut_col1, shortcut_col2, shortcut_col3, shortcut_col4, shortcut_col5 = st.columns(5)
+            with shortcut_col1:
+                if st.button("7 days ago", key="date_7d", help="Set start date to 7 days ago"):
+                    st.session_state.fetch_start_date = datetime.now().date() - timedelta(days=7)
+                    st.rerun()
+            with shortcut_col2:
+                if st.button("1 month ago", key="date_1m", help="Set start date to 1 month ago"):
+                    st.session_state.fetch_start_date = datetime.now().date() - timedelta(days=30)
+                    st.rerun()
+            with shortcut_col3:
+                if st.button("1 year ago", key="date_1y", help="Set start date to 1 year ago"):
+                    st.session_state.fetch_start_date = datetime.now().date() - timedelta(days=365)
+                    st.rerun()
+            with shortcut_col4:
+                if st.button("Today", key="date_today", help="Set end date to today (API uses yesterday as max)"):
+                    # API doesn't allow future dates, use yesterday as max
+                    st.session_state.fetch_end_date = datetime.now().date() - timedelta(days=1)
+                    st.rerun()
+            with shortcut_col5:
+                if st.button("Clear dates", key="date_clear", help="Clear both dates"):
+                    st.session_state.fetch_start_date = None
+                    st.session_state.fetch_end_date = None
+                    st.rerun()
+            
+            col3, col4 = st.columns(2)
+            with col3:
+                start_date = st.date_input(
+                    "Start Date",
+                    value=None,
+                    help="Filter by content creation date (from) - leave blank for no start date filter",
+                    key="fetch_start_date"
+                )
+            with col4:
+                end_date = st.date_input(
+                    "End Date",
+                    value=None,
+                    help="Filter by content creation date (to) - leave blank for no end date filter",
+                    key="fetch_end_date"
+                )
 
         # Action buttons row
         col1, col2, col3 = st.columns([2, 2, 2])
 
         with col1:
-            fetch_disabled = not access_token or not ig_account_id
             fetch_clicked = st.button(
                 "🔄 Fetch Next 25" if state['is_initialized'] else "🔍 Fetch Medias",
-                disabled=fetch_disabled or (state['is_initialized'] and not state['has_more']),
                 type="primary",
                 use_container_width=True
             )
@@ -197,43 +279,42 @@ def main():
 
         # Handle fetch action
         if fetch_clicked:
-            if not access_token or not ig_account_id:
-                st.error("❌ Please provide Access Token and Instagram Account ID")
+            if not access_token or not business_id or not ig_user_id:
+                st.error("❌ Please provide Access Token, Business ID, and Instagram User ID")
             else:
                 # Check if filters changed - reset if so
                 if (state['is_initialized'] and
-                    (state['creator_username'] != (creator_username or None) or
-                     state['only_with_permission'] != only_with_permission or
-                     state['include_metrics'] != include_metrics)):
+                    state['include_metrics'] != include_metrics):
                     state['medias'] = []
                     state['next_cursor'] = None
                     state['has_more'] = True
 
                 # Update filter state
-                state['creator_username'] = creator_username if creator_username else None
-                state['only_with_permission'] = only_with_permission
                 state['include_metrics'] = include_metrics
 
                 with st.spinner("Fetching medias..." + (" (including metrics)" if include_metrics else "")):
                     try:
+                        # Prepare date strings
+                        start_date_str = start_date.strftime("%Y-%m-%d") if start_date else None
+                        end_date_str = end_date.strftime("%Y-%m-%d") if end_date else None
+                        
+                        # Show debug info in UI
+                        st.info(f"🔍 Debug: Calling API with business_id={business_id}, ig_user_id={ig_user_id}")
+                        
                         batch, next_cursor = fetch_page_of_advertisable_medias(
-                            access_token,
-                            ig_account_id,
-                            creator_username=state['creator_username'],
+                            access_token=access_token,
+                            business_id=business_id,
+                            ig_user_id=ig_user_id,
                             cursor=state['next_cursor'],
-                            limit=25,
-                            only_with_permission=state['only_with_permission'],
+                            limit=50,
+                            post_types=post_types if post_types else None,
+                            ad_eligibilities=ad_eligibilities if ad_eligibilities else None,
+                            ad_usages=ad_usages if ad_usages else None,
+                            start_date=start_date_str,
+                            end_date=end_date_str,
+                            search_key=search_key if search_key else None,
+                            include_engagement_metrics=state['include_metrics'],
                         )
-
-                        # Fetch engagement metrics if requested
-                        if include_metrics and batch:
-                            from partnership_ads_booster import fetch_media_insights
-                            for media in batch:
-                                media_id = media.get('id')
-                                if media_id:
-                                    metrics = fetch_media_insights(access_token, media_id)
-                                    media['likes'] = metrics.get('likes')
-                                    media['comments'] = metrics.get('comments')
 
                         state['medias'].extend(batch)
                         state['next_cursor'] = next_cursor
@@ -247,37 +328,112 @@ def main():
         if state['medias']:
             st.success(f"✅ Loaded {len(state['medias'])} medias")
 
-            # Convert to display DataFrame
+            # Convert to display DataFrame - NEW TABLE DESIGN with rich Content Discovery API fields
             display_data = []
             for m in state['medias']:
+                # Get partnership info for eligibility and permission details
+                ad_eligibility = m.get('ad_eligibility', '')
+                permission_status = m.get('permission_status', '')
+                ad_usage = m.get('ad_usage', '')
+                # API returns lowercase enums (e.g. "ad_ready"); normalize for matching
+                ad_eligibility_key = (ad_eligibility or '').upper()
+                permission_status_key = (permission_status or '').upper()
+                ad_usage_key = (ad_usage or '').upper()
+                
+                # Create eligibility badge with color coding
+                if ad_eligibility_key == 'AD_READY':
+                    eligibility_badge = '✅ Ready'
+                elif ad_eligibility_key == 'NEEDS_ATTENTION':
+                    eligibility_badge = '⚠️ Needs Attention'
+                elif ad_eligibility_key == 'INELIGIBLE':
+                    eligibility_badge = '❌ Ineligible'
+                elif ad_eligibility_key == 'EXCLUDED':
+                    eligibility_badge = '🚫 Excluded'
+                else:
+                    eligibility_badge = ad_eligibility or 'Unknown'
+                
+                # Create permission badge (green check = authorized, red cross = not)
+                if permission_status_key == 'AUTHORIZED':
+                    permission_badge = '✅'
+                elif permission_status_key == 'UNAUTHORIZED':
+                    permission_badge = '❌'
+                else:
+                    permission_badge = permission_status or 'Unknown'
+                
+                # Create usage badge
+                if ad_usage_key == 'NEVER_USED':
+                    usage_badge = '🆕 New'
+                elif ad_usage_key == 'ACTIVE':
+                    usage_badge = '🟢 Active'
+                elif ad_usage_key == 'PREVIOUSLY_USED':
+                    usage_badge = '📊 Used'
+                else:
+                    usage_badge = ad_usage or 'Unknown'
+                
+                # Safely handle caption
+                caption = m.get('caption') or ''
+                caption_display = (caption[:50] + '...') if len(caption) > 50 else caption
+                
                 row = {
-                    'media_id': m.get('id', ''),
+                    'content_id': m.get('id', ''),
+                    'platform': m.get('platform', ''),
+                    'media_type': m.get('media_type', ''),
+                    'post_type': m.get('post_type', ''),
                     'permalink': m.get('permalink', ''),
-                    'owner_id': m.get('owner_id', ''),
-                    'has_permission': '✅' if m.get('has_permission_for_partnership_ad', False) else '❌',
-                    'eligibility_errors': str(m.get('eligibility_errors', [])) if m.get('eligibility_errors') else '',
+                    'caption': caption_display,
+                    'author': m.get('author_display_name', ''),
+                    'eligibility': eligibility_badge,
+                    'permission': permission_badge,
+                    'usage': usage_badge,
+                    'is_recommended': 'yes' if m.get('is_recommended', False) else 'no',
                 }
                 # Include metrics columns if they exist
-                if 'likes' in m:
+                if m.get('likes') is not None:
                     row['likes'] = m.get('likes')
-                if 'comments' in m:
+                if m.get('comments') is not None:
                     row['comments'] = m.get('comments')
+                if m.get('views') is not None:
+                    row['views'] = m.get('views')
+                if m.get('reach') is not None:
+                    row['reach'] = m.get('reach')
+                if m.get('shares') is not None:
+                    row['shares'] = m.get('shares')
+                if m.get('interaction') is not None:
+                    row['interaction'] = m.get('interaction')
+                if m.get('saves') is not None:
+                    row['saves'] = m.get('saves')
                 display_data.append(row)
 
             df_display = pd.DataFrame(display_data)
 
-            # Build column config dynamically
+            # Build column config dynamically - NEW TABLE DESIGN
             column_config = {
-                "media_id": st.column_config.TextColumn("Media ID", width="medium"),
-                "permalink": st.column_config.LinkColumn("Permalink", width="large"),
-                "owner_id": st.column_config.TextColumn("Owner ID", width="medium"),
-                "has_permission": st.column_config.TextColumn("Permission", width="small"),
-                "eligibility_errors": st.column_config.TextColumn("Errors", width="medium"),
+                "content_id": st.column_config.TextColumn("Content ID", width="medium"),
+                "platform": st.column_config.TextColumn("Platform", width="small"),
+                "media_type": st.column_config.TextColumn("Media", width="small"),
+                "post_type": st.column_config.TextColumn("Post Type", width="small"),
+                "permalink": st.column_config.LinkColumn("Link", width="medium"),
+                "caption": st.column_config.TextColumn("Caption", width="large"),
+                "author": st.column_config.TextColumn("Creator", width="medium"),
+                "eligibility": st.column_config.TextColumn("Eligibility", width="small"),
+                "permission": st.column_config.TextColumn("Permission", width="small"),
+                "usage": st.column_config.TextColumn("Usage", width="small"),
+                "is_recommended": st.column_config.TextColumn("Recommended", width="small", help="Recommended by AI"),
             }
             if 'likes' in df_display.columns:
                 column_config["likes"] = st.column_config.NumberColumn("Likes", width="small")
             if 'comments' in df_display.columns:
                 column_config["comments"] = st.column_config.NumberColumn("Comments", width="small")
+            if 'views' in df_display.columns:
+                column_config["views"] = st.column_config.NumberColumn("Views", width="small")
+            if 'reach' in df_display.columns:
+                column_config["reach"] = st.column_config.NumberColumn("Reach", width="small")
+            if 'shares' in df_display.columns:
+                column_config["shares"] = st.column_config.NumberColumn("Shares", width="small")
+            if 'interaction' in df_display.columns:
+                column_config["interaction"] = st.column_config.NumberColumn("Interaction", width="small")
+            if 'saves' in df_display.columns:
+                column_config["saves"] = st.column_config.NumberColumn("Saves", width="small")
 
             st.dataframe(
                 df_display,
@@ -337,7 +493,7 @@ def main():
             )
 
         # Show hint if sidebar credentials not provided
-        if not access_token or not ig_account_id:
+        if not access_token or not business_id or not ig_user_id:
             st.info("👈 Enter your Access Token and Instagram Account ID in the sidebar first.")
 
         with st.form("create_form"):
@@ -381,7 +537,7 @@ def main():
             ad_account_id = st.session_state.ad_account_id
             facebook_page_id = st.session_state.fb_page_id
 
-            if not access_token or not ig_account_id:
+            if not access_token or not business_id or not ig_user_id:
                 st.error("❌ Please provide Access Token and Instagram Account ID")
             elif not ad_account_id or not facebook_page_id:
                 st.error("❌ Please provide Ad Account ID and Facebook Page ID")
@@ -413,7 +569,8 @@ def main():
                         # Create ads
                         create_partnership_ads_from_csv(
                             access_token,
-                            ig_account_id,
+                            business_id,
+                            ig_user_id,
                             ad_account_id,
                             facebook_page_id,
                             temp_input,
@@ -510,14 +667,14 @@ def main():
                 )
 
             if submit_view_permissions:
-                if not access_token or not ig_account_id:
+                if not access_token or not business_id or not ig_user_id:
                     st.error("❌ Please provide Access Token and Instagram Account ID in the sidebar")
                 else:
                     with st.spinner("Fetching existing permissions..."):
                         try:
                             permissions = fetch_account_level_permissions(
                                 access_token,
-                                ig_account_id,
+                                ig_user_id,
                                 output_filename_permissions,
                             )
 
@@ -615,7 +772,7 @@ def main():
                 )
 
             if submit_bulk_request:
-                if not access_token or not ig_account_id:
+                if not access_token or not business_id or not ig_user_id:
                     st.error("❌ Please provide Access Token and Instagram Account ID in the sidebar")
                 elif not uploaded_permission_file:
                     st.error("❌ Please upload a CSV file with creator IDs")
@@ -646,7 +803,7 @@ def main():
                                 # Send bulk requests
                                 bulk_request_account_level_permissions(
                                     access_token,
-                                    ig_account_id,
+                                    ig_user_id,
                                     temp_input_permission,
                                     output_filename_request,
                                 )

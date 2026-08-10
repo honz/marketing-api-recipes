@@ -373,25 +373,43 @@ class APIError(Exception):
 
 def fetch_page_of_advertisable_medias(
     access_token: str,
-    ig_account_id: str,
+    business_id: str,
+    ig_user_id: str,
     creator_username: Optional[str] = None,
     cursor: Optional[str] = None,
     limit: int = 25,
     only_with_permission: bool = False,
+    post_types: Optional[List[str]] = None,
+    ad_eligibilities: Optional[List[str]] = None,
+    ad_usages: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    search_key: Optional[str] = None,
+    include_engagement_metrics: bool = False,
 ) -> Tuple[List[Dict], Optional[str]]:
     """
     Fetch a single page of advertisable medias for pagination support.
+    Uses the Content Discovery API (partnership-ads-advertisable-content).
 
     Args:
         access_token: Facebook/Instagram access token
-        ig_account_id: Instagram account ID
-        creator_username: Instagram creator username (optional)
+        business_id: Business ID (required for Content Discovery API)
+        ig_user_id: Instagram User ID (required)
+        creator_username: Instagram creator username (optional, legacy filter)
         cursor: Pagination cursor from previous request (None for first page)
-        limit: Number of items per page (default 25, max 25)
+        limit: Number of items per page (default 25, max 50)
         only_with_permission: If True, only include medias with partnership ad permission
+        post_types: Filter by post types (e.g., ["FEED", "STORY", "REEL"])
+        ad_eligibilities: Filter by ad eligibility (e.g., ["AD_READY", "INELIGIBLE"])
+        ad_usages: Filter by ad usage (e.g., ["NEVER_USED", "ACTIVE", "PREVIOUSLY_USED"])
+        start_date: Start date for content creation (YYYY-MM-DD format)
+        end_date: End date for content creation (YYYY-MM-DD format)
+        search_key: Keyword search across caption text
+        include_engagement_metrics: If True, include organic insights (likes, comments, etc.)
 
     Returns:
         Tuple of (list of media dicts, next_cursor or None if no more pages)
+        Media dicts are mapped to legacy format for backward compatibility.
 
     Raises:
         APIError: If the API returns a 5xx error (should be retried)
@@ -401,220 +419,380 @@ def fetch_page_of_advertisable_medias(
         "Authorization": f"Bearer {access_token}",
     }
 
-    # If we have a cursor, it's a full URL from the paging.next field
+    # Build the URL for Content Discovery API
+    url = f"https://graph.facebook.com/v25.0/{business_id}/partnership-ads-advertisable-content"
+    
+    # Build base fields (always requested) - FULL FIELD SET
+    fields = (
+        "content_id,platform,media_type,post_type,caption,permalink,creation_time,"
+        "author{display_name,ig_user_id,fb_page_id,profile_picture_url},"
+        "is_recommended,ad_usage,"
+        "partnership_info{ad_eligibility,tagged_partner{display_name,ig_user_id,fb_page_id},"
+        "permission_status,permission_type,ad_code,content_types}"
+    )
+    
+    # Add organic insights only if requested
+    if include_engagement_metrics:
+        fields += ",organic_insights{likes,comments,views,reach,shares,interaction,saves}"
+    
+    # Build parameters - use limit 25 for better performance
+    params = {
+        "ig_user_id": ig_user_id,
+        "limit": min(limit, 25),
+        "fields": fields,
+    }
+    
+    # Add pagination cursor if provided
     if cursor:
-        url = cursor
-        params = {}
-    else:
-        url = f"https://graph.facebook.com/v22.0/{ig_account_id}/branded_content_advertisable_medias"
-        params = {
-            "fields": "eligibility_errors,owner_id,permalink,id,has_permission_for_partnership_ad",
-            "limit": min(limit, 25),  # API max is 25
-        }
-        if creator_username:
-            params["creator_username"] = creator_username
+        params["after"] = cursor
+    
+    # Add optional filters
+    # API enum values are lowercase (e.g. "ad_ready"), so normalize filter values.
+    if post_types:
+        params["post_types"] = json.dumps([t.lower() for t in post_types])
+    if ad_eligibilities:
+        params["ad_eligibilities"] = json.dumps([e.lower() for e in ad_eligibilities])
+    if ad_usages:
+        params["ad_usages"] = json.dumps([u.lower() for u in ad_usages])
+    if start_date:
+        params["start_date"] = start_date
+    if end_date:
+        params["end_date"] = end_date
+    if search_key:
+        params["search_key"] = search_key
+    # Note: creator_username is not a direct filter in new API; use ad_partner_ig_user_ids instead
 
-    response = requests.get(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
+    # Debug logging
+    print(f"DEBUG: Calling Content Discovery API")
+    print(f"DEBUG: URL: {url}")
+    print(f"DEBUG: Params: {json.dumps(params, indent=2)}")
+
+    try:
+        response = requests.get(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed: {e}")
+        return [], None
 
     # Raise exception for server errors (5xx) so caller can retry
     if response.status_code >= 500:
+        # Log the error details for debugging
+        print(f"Content Discovery API returned {response.status_code}. This API may not be enabled for your business yet (GK: pa_content_discovery_api).")
+        print(f"Error details: {response.text}")
+        print(f"Request URL: {response.url}")
         raise APIError(response.status_code, response.text)
 
     # For client errors (4xx), return empty to signal end
     if response.status_code != 200:
         print(f"Error: {response.status_code} - {response.text}")
+        print(f"Request URL: {response.url}")
+        # If it's a 400 error about invalid parameters, the API might not support those filters yet
+        if response.status_code == 400:
+            print("Note: Some filter parameters may not be supported by the Content Discovery API yet.")
         return [], None
 
     response_data = response.json()
-    medias = response_data.get("data", [])
+    content_items = response_data.get("data", [])
 
-    # Apply permission filter if requested
+    # Map new API response format to legacy format for backward compatibility
+    medias = []
+    for item in content_items:
+        # Extract partnership info (first entry if multiple partners)
+        partnership_info = item.get("partnership_info", [])
+        first_partnership = partnership_info[0] if partnership_info else {}
+        
+        # Extract organic insights
+        organic_insights = item.get("organic_insights", {})
+        
+        # Extract author info
+        author = item.get("author", {})
+        
+        # Map to legacy format
+        media = {
+            "id": item.get("content_id", ""),
+            "permalink": item.get("permalink", ""),
+            "owner_id": author.get("ig_user_id", "") or author.get("fb_page_id", ""),
+            # Check if any partnership has AUTHORIZED permission status
+            "has_permission_for_partnership_ad": any(
+                (p.get("permission_status") or "").upper() == "AUTHORIZED"
+                for p in partnership_info
+            ),
+            # Map ad_eligibility to eligibility_errors format
+            "eligibility_errors": [],
+            # New fields from Content Discovery API
+            "platform": item.get("platform", ""),
+            "media_type": item.get("media_type", ""),
+            "post_type": item.get("post_type", ""),
+            "caption": item.get("caption", ""),
+            "creation_time": item.get("creation_time", ""),
+            "author_display_name": author.get("display_name", ""),
+            "author_profile_picture_url": author.get("profile_picture_url", ""),
+            "is_recommended": item.get("is_recommended", False),
+            "ad_usage": item.get("ad_usage", ""),
+            "ad_eligibility": first_partnership.get("ad_eligibility", ""),
+            "permission_status": first_partnership.get("permission_status", ""),
+            "ad_code": first_partnership.get("ad_code", ""),
+            "content_types": first_partnership.get("content_types", []),
+            # Organic insights
+            "likes": organic_insights.get("likes"),
+            "comments": organic_insights.get("comments"),
+            "views": organic_insights.get("views"),
+            "reach": organic_insights.get("reach"),
+            "shares": organic_insights.get("shares"),
+            "interaction": organic_insights.get("interaction"),
+            "saves": organic_insights.get("saves"),
+        }
+        
+        # Map ad_eligibility to eligibility_errors for backward compatibility
+        ad_eligibility = first_partnership.get("ad_eligibility", "")
+        if ad_eligibility and ad_eligibility.upper() != "AD_READY":
+            media["eligibility_errors"] = [f"Ad eligibility: {ad_eligibility}"]
+        
+        medias.append(media)
+
+    # Apply permission filter if requested (for backward compatibility)
     if only_with_permission:
         medias = [
             m for m in medias
             if m.get("has_permission_for_partnership_ad", False)
         ]
 
-    # Get next cursor
+    # Get next cursor from paging
     next_cursor = None
-    if "paging" in response_data and "next" in response_data["paging"]:
-        next_cursor = response_data["paging"]["next"]
+    if "paging" in response_data and "cursors" in response_data["paging"]:
+        next_cursor = response_data["paging"]["cursors"].get("after")
 
     return medias, next_cursor
 
 
 def fetch_all_advertisable_medias(
     access_token: str,
-    ig_account_id: str,
+    business_id: str,
+    ig_user_id: str,
     creator_username: Optional[str] = None,
     output_csv: str = "advertisable_medias.csv",
     limit: Optional[int] = None,
     only_with_permission: bool = False,
     include_engagement_metrics: bool = False,
+    post_types: Optional[List[str]] = None,
+    ad_eligibilities: Optional[List[str]] = None,
+    ad_usages: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    search_key: Optional[str] = None,
 ) -> None:
     """
     Fetch all advertisable medias for the given Instagram account and save to CSV.
+    Uses the Content Discovery API.
 
     Args:
         access_token: Facebook/Instagram access token
-        ig_account_id: Instagram account ID
+        business_id: Business ID (required for Content Discovery API)
+        ig_user_id: Instagram User ID
         creator_username: Instagram creator username (optional but recommended to avoid fetching too much data)
         output_csv: Output CSV file path
         limit: Maximum number of medias to fetch (optional, fetches all if not specified)
         only_with_permission: If True, only include medias with partnership ad permission
         include_engagement_metrics: If True, fetch engagement metrics (likes, comments, reach, impressions, saves)
+        post_types: Filter by post types
+        ad_eligibilities: Filter by ad eligibility
+        ad_usages: Filter by ad usage
+        start_date: Start date for content creation (YYYY-MM-DD)
+        end_date: End date for content creation (YYYY-MM-DD)
+        search_key: Keyword search across caption text
     """
     creator_info = f" (creator: {creator_username})" if creator_username else ""
     print(
-        f"Fetching advertisable medias for IG account {ig_account_id}{creator_info}..."
+        f"Fetching advertisable medias for IG user {ig_user_id}{creator_info}..."
     )
 
-    url = f"https://graph.facebook.com/v22.0/{ig_account_id}/branded_content_advertisable_medias"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {access_token}",
-    }
-    params = {
-        "fields": "eligibility_errors,owner_id,permalink,id,has_permission_for_partnership_ad",
-        "limit": 25,
-    }
-
-    if creator_username:
-        params["creator_username"] = creator_username
-
     all_medias = []
+    cursor = None
+    total_fetched = 0
 
-    try:
-        while True:
-            response = requests.get(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
+    while True:
+        medias, next_cursor = fetch_page_of_advertisable_medias(
+            access_token=access_token,
+            business_id=business_id,
+            ig_user_id=ig_user_id,
+            creator_username=creator_username,
+            cursor=cursor,
+            limit=50,  # Use new max limit
+            only_with_permission=only_with_permission,
+            post_types=post_types,
+            ad_eligibilities=ad_eligibilities,
+            ad_usages=ad_usages,
+            start_date=start_date,
+            end_date=end_date,
+            search_key=search_key,
+            include_engagement_metrics=include_engagement_metrics,
+        )
 
-            if response.status_code != 200:
-                print(f"Error: {response.status_code} - {response.text}")
-                sys.exit(1)
+        if not medias:
+            break
 
-            response_data = response.json()
+        all_medias.extend(medias)
+        total_fetched += len(medias)
+        print(f"Fetched {total_fetched} medias so far...")
 
-            if "data" in response_data:
-                medias = response_data["data"]
+        # Check if we've reached the limit
+        if limit and total_fetched >= limit:
+            all_medias = all_medias[:limit]
+            break
 
-                # Apply permission filter if requested
-                if only_with_permission:
-                    medias = [
-                        m
-                        for m in medias
-                        if m.get("has_permission_for_partnership_ad", False)
-                    ]
+        # Check if there are more pages
+        if not next_cursor:
+            break
 
-                all_medias.extend(medias)
-                print(f"Fetched {len(medias)} medias (Total: {len(all_medias)})")
+        cursor = next_cursor
 
-                if limit and len(all_medias) >= limit:
-                    all_medias = all_medias[:limit]
-                    print(f"Reached limit of {limit} medias")
-                    break
+    print(f"Total medias fetched: {len(all_medias)}")
 
-            if "paging" in response_data and "next" in response_data["paging"]:
-                url = response_data["paging"]["next"]
-                params = {}
-            else:
-                break
-
-        if not all_medias:
-            print("No advertisable medias found")
-            return
-
-        csv_rows = []
-        total_medias = len(all_medias)
-        for idx, media in enumerate(all_medias, 1):
-            row = {
-                "media_id": media.get("id", ""),
-                "permalink": media.get("permalink", ""),
-                "owner_id": media.get("owner_id", ""),
-                "has_permission_for_partnership_ad": media.get(
-                    "has_permission_for_partnership_ad", False
-                ),
-                "eligibility_errors": json.dumps(media.get("eligibility_errors", [])),
-            }
-
-            # Fetch engagement metrics if requested
-            if include_engagement_metrics:
-                media_id = media.get("id")
-                if media_id:
-                    print(f"Fetching metrics for media {idx}/{total_medias}...")
-                    metrics = fetch_media_insights(access_token, media_id)
-                    row["likes"] = metrics.get("likes")
-                    row["comments"] = metrics.get("comments")
-
-            csv_rows.append(row)
-
+    # Write to CSV with new fields from Content Discovery API
+    if all_medias:
+        # Define CSV columns (backward compatible + new fields)
         fieldnames = [
             "media_id",
             "permalink",
             "owner_id",
             "has_permission_for_partnership_ad",
             "eligibility_errors",
+            # New fields from Content Discovery API
+            "platform",
+            "media_type",
+            "post_type",
+            "caption",
+            "creation_time",
+            "author_display_name",
+            "author_profile_picture_url",
+            "is_recommended",
+            "ad_usage",
+            "ad_eligibility",
+            "permission_status",
+            "ad_code",
+            "content_types",
+            # Organic insights (now included by default)
+            "likes",
+            "comments",
+            "views",
+            "reach",
+            "shares",
+            "interaction",
+            "saves",
         ]
 
-        # Add engagement metrics columns if they were fetched
-        if include_engagement_metrics:
-            fieldnames.extend(["likes", "comments"])
         with open(output_csv, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(csv_rows)
 
-        print(
-            f"\nSuccessfully saved {len(csv_rows)} advertisable medias to {output_csv}"
-        )
+            for media in all_medias:
+                # Map media dict to CSV row
+                row = {
+                    "media_id": media.get("id", ""),
+                    "permalink": media.get("permalink", ""),
+                    "owner_id": media.get("owner_id", ""),
+                    "has_permission_for_partnership_ad": media.get(
+                        "has_permission_for_partnership_ad", False
+                    ),
+                    "eligibility_errors": json.dumps(media.get("eligibility_errors", [])),
+                    "platform": media.get("platform", ""),
+                    "media_type": media.get("media_type", ""),
+                    "post_type": media.get("post_type", ""),
+                    "caption": media.get("caption", ""),
+                    "creation_time": media.get("creation_time", ""),
+                    "author_display_name": media.get("author_display_name", ""),
+                    "author_profile_picture_url": media.get("author_profile_picture_url", ""),
+                    "is_recommended": media.get("is_recommended", False),
+                    "ad_usage": media.get("ad_usage", ""),
+                    "ad_eligibility": media.get("ad_eligibility", ""),
+                    "permission_status": media.get("permission_status", ""),
+                    "ad_code": media.get("ad_code", ""),
+                    "content_types": json.dumps(media.get("content_types", [])),
+                    "likes": media.get("likes", ""),
+                    "comments": media.get("comments", ""),
+                    "views": media.get("views", ""),
+                    "reach": media.get("reach", ""),
+                    "shares": media.get("shares", ""),
+                    "interaction": media.get("interaction", ""),
+                    "saves": media.get("saves", ""),
+                }
+                writer.writerow(row)
 
-    except requests.exceptions.RequestException as e:
-        print(f"Request error occurred: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        sys.exit(1)
+        print(f"Results saved to {output_csv}")
+    else:
+        print("No medias found.")
 
 
 def fetch_branded_content_advertisable_medias(
     access_token: str,
-    ig_account_id: str,
+    business_id: str,
+    ig_user_id: str,
     ad_code: Optional[str] = None,
     permalinks: Optional[List[str]] = None,
+    content_ids: Optional[List[str]] = None,
 ) -> Optional[Dict]:
     """
-    Fetch eligibility information for a specific media.
+    Fetch eligibility information for a specific media using Content Discovery API.
+    Uses direct lookup mode.
 
     Args:
         access_token: Facebook/Instagram access token
-        ig_account_id: Instagram account ID
+        business_id: Business ID (required for Content Discovery API)
+        ig_user_id: Instagram User ID
         ad_code: Ad code for the media
-        permalinks: List of permalinks
+        permalinks: List of permalinks (max 50)
+        content_ids: List of content IDs (max 50)
 
     Returns:
         Dict containing eligibility information or None
+        Mapped to legacy format for backward compatibility.
     """
-    url = f"https://graph.facebook.com/v22.0/{ig_account_id}/branded_content_advertisable_medias"
+    url = f"https://graph.facebook.com/v23.0/{business_id}/partnership-ads-advertisable-content"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {access_token}",
     }
     params = {
-        "fields": "eligibility_errors,owner_id,permalink,id,has_permission_for_partnership_ad",
+        "ig_user_id": ig_user_id,
+        "fields": (
+            "content_id,permalink,partnership_info{ad_eligibility,permission_status,ad_code},"
+            "author{ig_user_id,fb_page_id}"
+        ),
     }
 
     if ad_code:
-        params["ad_code"] = ad_code
+        params["ad_codes"] = json.dumps([ad_code])
     elif permalinks:
         params["permalinks"] = json.dumps(permalinks)
+    elif content_ids:
+        params["content_ids"] = json.dumps(content_ids)
     else:
-        raise ValueError("ad_code or permalinks must be passed")
+        raise ValueError("ad_code, permalinks, or content_ids must be passed")
 
     response = requests.get(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
     if response.status_code == 200:
         response_data = response.json()
         if "data" in response_data and len(response_data["data"]) > 0:
-            print(f"Eligibility: {response_data['data'][0]}")
-            return response_data["data"][0]
+            item = response_data["data"][0]
+            # Map to legacy format
+            partnership_info = item.get("partnership_info", [])
+            first_partnership = partnership_info[0] if partnership_info else {}
+            author = item.get("author", {})
+            
+            legacy_format = {
+                "id": item.get("content_id", ""),
+                "permalink": item.get("permalink", ""),
+                "owner_id": author.get("ig_user_id", "") or author.get("fb_page_id", ""),
+                "has_permission_for_partnership_ad": (first_partnership.get("permission_status") or "").upper() == "AUTHORIZED",
+                "eligibility_errors": [],
+            }
+            
+            # Map ad_eligibility to eligibility_errors
+            ad_eligibility = first_partnership.get("ad_eligibility", "")
+            if ad_eligibility and ad_eligibility.upper() != "AD_READY":
+                legacy_format["eligibility_errors"] = [f"Ad eligibility: {ad_eligibility}"]
+            
+            print(f"Eligibility: {legacy_format}")
+            return legacy_format
     else:
         print(f"Error: {response.status_code} - {response.text}")
         return {"error": response.text}
@@ -883,6 +1061,7 @@ def create_ad(
 
 def create_partnership_ads_from_csv(
     access_token: str,
+    business_id: str,
     ig_account_id: str,
     ad_account_id: str,
     facebook_page_id: str,
@@ -912,6 +1091,7 @@ def create_partnership_ads_from_csv(
 
     Args:
         access_token: Facebook/Instagram access token
+        business_id: Business ID (required for Content Discovery API)
         ig_account_id: Instagram account ID
         ad_account_id: Ad account ID
         facebook_page_id: Facebook page ID
@@ -996,7 +1176,7 @@ def create_partnership_ads_from_csv(
                 if ad_code:
                     # When ad_code is provided, it already has permission
                     eligibility = fetch_branded_content_advertisable_medias(
-                        access_token, ig_account_id, ad_code=ad_code
+                        access_token, business_id, ig_account_id, ad_code=ad_code
                     )
                 elif permalink:
                     # Extract shortcode from permalink if it's a URL
@@ -1016,7 +1196,7 @@ def create_partnership_ads_from_csv(
                         continue
 
                     eligibility = fetch_branded_content_advertisable_medias(
-                        access_token, ig_account_id, permalinks=[shortcode]
+                        access_token, business_id, ig_account_id, permalinks=[shortcode]
                     )
                 else:
                     eligibility = None
@@ -1166,11 +1346,11 @@ def main():
         epilog="""
 Examples:
   Fetch all advertisable medias:
-    python partnership_ads_booster.py --mode fetch --access-token YOUR_TOKEN --ig-account-id 17841400875057971 --creator-username CREATOR_USERNAME
+    python partnership_ads_booster.py --mode fetch --access-token YOUR_TOKEN --business-id 123456789 --ig-account-id 17841400875057971 --creator-username CREATOR_USERNAME
 
   Create partnership ads from CSV:
     python partnership_ads_booster.py --mode create --access-token YOUR_TOKEN \\
-      --ig-account-id 17841400875057971 --ad-account-id 1549883851784009 \\
+      --business-id 123456789 --ig-account-id 17841400875057971 --ad-account-id 1549883851784009 \\
       --facebook-page-id 102988293558 --input-csv input.csv
         """,
     )
@@ -1185,6 +1365,11 @@ Examples:
         "--access-token", required=True, help="Facebook/Instagram access token"
     )
     parser.add_argument("--ig-account-id", required=True, help="Instagram account ID")
+    parser.add_argument(
+        "--business-id",
+        required=True,
+        help="Business ID (required for Content Discovery API)",
+    )
     parser.add_argument(
         "--creator-username",
         help="Instagram creator username (optional but recommended to avoid fetching too much data)",
@@ -1229,9 +1414,10 @@ Examples:
         output_csv = args.output_csv or "advertisable_medias.csv"
         fetch_all_advertisable_medias(
             args.access_token,
+            args.business_id,
             args.ig_account_id,
-            args.creator_username,
-            output_csv,
+            creator_username=args.creator_username,
+            output_csv=output_csv,
             only_with_permission=args.only_with_permission,
             include_engagement_metrics=args.include_metrics,
         )
@@ -1250,6 +1436,7 @@ Examples:
         output_csv = args.output_csv or "created_ads_output.csv"
         create_partnership_ads_from_csv(
             args.access_token,
+            args.business_id,
             args.ig_account_id,
             args.ad_account_id,
             args.facebook_page_id,
