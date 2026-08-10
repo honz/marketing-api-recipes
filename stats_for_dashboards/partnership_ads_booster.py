@@ -467,7 +467,11 @@ def fetch_page_of_advertisable_medias(
     print(f"DEBUG: URL: {url}")
     print(f"DEBUG: Params: {json.dumps(params, indent=2)}")
 
-    response = requests.get(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
+    try:
+        response = requests.get(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed: {e}")
+        return [], None
 
     # Raise exception for server errors (5xx) so caller can retry
     if response.status_code >= 500:

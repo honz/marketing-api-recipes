@@ -97,24 +97,31 @@ def mock_facebook_page_id():
     return "102988293558"
 
 
+def _cd_item(content_id, permission="authorized", eligibility="ad_ready",
+             post_type="reels", owner_id=None, organic=None):
+    """Build a Content Discovery API response item for tests."""
+    item = {
+        "content_id": content_id,
+        "permalink": f"https://instagram.com/p/{content_id}",
+        "post_type": post_type,
+        "author": {"ig_user_id": owner_id or f"owner_{content_id}"},
+        "partnership_info": [
+            {"ad_eligibility": eligibility, "permission_status": permission}
+        ],
+    }
+    if organic is not None:
+        item["organic_insights"] = organic
+    return item
+
+
 @pytest.fixture
 def sample_media_response():
     return {
         "data": [
-            {
-                "id": "media_123",
-                "permalink": "https://instagram.com/p/abc123",
-                "owner_id": "owner_123",
-                "has_permission_for_partnership_ad": True,
-                "eligibility_errors": [],
-            },
-            {
-                "id": "media_456",
-                "permalink": "https://instagram.com/p/def456",
-                "owner_id": "owner_456",
-                "has_permission_for_partnership_ad": False,
-                "eligibility_errors": ["ERROR_1"],
-            },
+            _cd_item("media_123", permission="authorized", eligibility="ad_ready",
+                     post_type="reels", owner_id="owner_123"),
+            _cd_item("media_456", permission="unauthorized", eligibility="ineligible",
+                     post_type="feed", owner_id="owner_456"),
         ],
         "paging": {},
     }
@@ -202,6 +209,7 @@ class TestFetchPageOfAdvertisableMedias:
         self,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         sample_media_response,
     ):
@@ -210,74 +218,71 @@ class TestFetchPageOfAdvertisableMedias:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             **sample_media_response,
-            "paging": {"next": "https://graph.facebook.com/v22.0/next_page"}
+            "paging": {"cursors": {"after": "CURSOR_NEXT"}},
         }
         mock_get.return_value = mock_response
 
         medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
         )
 
         assert len(medias) == 2
         assert medias[0]["id"] == "media_123"
-        assert next_cursor == "https://graph.facebook.com/v22.0/next_page"
+        assert next_cursor == "CURSOR_NEXT"
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
     def test_fetch_with_cursor(
         self,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
     ):
         """Test fetching subsequent page with cursor"""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "data": [
-                {
-                    "id": "media_789",
-                    "permalink": "https://instagram.com/p/789",
-                    "owner_id": "owner_789",
-                    "has_permission_for_partnership_ad": True,
-                    "eligibility_errors": [],
-                }
-            ],
-            "paging": {}
+            "data": [_cd_item("media_789", owner_id="owner_789")],
+            "paging": {},
         }
         mock_get.return_value = mock_response
 
-        cursor_url = "https://graph.facebook.com/v22.0/next_page?cursor=abc123"
+        cursor_token = "abc123"
         medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
-            cursor=cursor_url,
+            cursor=cursor_token,
         )
 
         assert len(medias) == 1
         assert medias[0]["id"] == "media_789"
         assert next_cursor is None  # No more pages
-        # Verify cursor URL was used directly
+        # Verify cursor is sent as the "after" pagination param
         mock_get.assert_called_once()
         call_args = mock_get.call_args
-        assert call_args[0][0] == cursor_url
+        assert call_args[1]["params"]["after"] == cursor_token
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
     def test_fetch_last_page_no_next_cursor(
         self,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         sample_media_response,
     ):
         """Test that last page returns None for next_cursor"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = sample_media_response  # No paging.next
+        mock_response.json.return_value = sample_media_response  # No paging cursors
         mock_get.return_value = mock_response
 
         medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
         )
 
@@ -285,15 +290,16 @@ class TestFetchPageOfAdvertisableMedias:
         assert next_cursor is None
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
-    def test_fetch_with_creator_username(
+    def test_fetch_creator_username_not_sent(
         self,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_creator_username,
         sample_media_response,
     ):
-        """Test that creator_username is passed as parameter"""
+        """creator_username is accepted but is not a Content Discovery API param"""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = sample_media_response
@@ -301,18 +307,20 @@ class TestFetchPageOfAdvertisableMedias:
 
         partnership_ads_booster.fetch_page_of_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
             creator_username=mock_creator_username,
         )
 
         call_args = mock_get.call_args
-        assert call_args[1]["params"]["creator_username"] == mock_creator_username
+        assert "creator_username" not in call_args[1]["params"]
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
     def test_fetch_with_permission_filter(
         self,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
     ):
         """Test that only_with_permission filters results"""
@@ -320,27 +328,16 @@ class TestFetchPageOfAdvertisableMedias:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "data": [
-                {
-                    "id": "media_1",
-                    "permalink": "https://instagram.com/p/1",
-                    "owner_id": "owner_1",
-                    "has_permission_for_partnership_ad": True,
-                    "eligibility_errors": [],
-                },
-                {
-                    "id": "media_2",
-                    "permalink": "https://instagram.com/p/2",
-                    "owner_id": "owner_2",
-                    "has_permission_for_partnership_ad": False,
-                    "eligibility_errors": [],
-                },
+                _cd_item("media_1", permission="authorized", owner_id="owner_1"),
+                _cd_item("media_2", permission="unauthorized", owner_id="owner_2"),
             ],
-            "paging": {}
+            "paging": {},
         }
         mock_get.return_value = mock_response
 
         medias, _ = partnership_ads_booster.fetch_page_of_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
             only_with_permission=True,
         )
@@ -353,6 +350,7 @@ class TestFetchPageOfAdvertisableMedias:
         self,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
     ):
         """Test that API errors return empty list and None cursor"""
@@ -363,6 +361,7 @@ class TestFetchPageOfAdvertisableMedias:
 
         medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
         )
 
@@ -374,6 +373,7 @@ class TestFetchPageOfAdvertisableMedias:
         self,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
     ):
         """Test that request exceptions return empty list and None cursor"""
@@ -382,6 +382,7 @@ class TestFetchPageOfAdvertisableMedias:
 
         medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
         )
 
@@ -393,6 +394,7 @@ class TestFetchPageOfAdvertisableMedias:
         self,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
     ):
         """Test that empty data response returns empty list"""
@@ -403,6 +405,7 @@ class TestFetchPageOfAdvertisableMedias:
 
         medias, next_cursor = partnership_ads_booster.fetch_page_of_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
         )
 
@@ -420,6 +423,7 @@ class TestFetchAllAdvertisableMedias:
         mock_file,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_creator_username,
         sample_media_response,
@@ -431,9 +435,10 @@ class TestFetchAllAdvertisableMedias:
 
         partnership_ads_booster.fetch_all_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
-            mock_creator_username,
-            "test_output.csv",
+            creator_username=mock_creator_username,
+            output_csv="test_output.csv",
         )
 
         mock_get.assert_called_once()
@@ -454,32 +459,16 @@ class TestFetchAllAdvertisableMedias:
         mock_file,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_creator_username,
     ):
         first_response = {
-            "data": [
-                {
-                    "id": "media_1",
-                    "permalink": "https://instagram.com/p/1",
-                    "owner_id": "owner_1",
-                    "has_permission_for_partnership_ad": True,
-                    "eligibility_errors": [],
-                }
-            ],
-            "paging": {"next": "https://graph.facebook.com/v22.0/next_page"},
+            "data": [_cd_item("media_1", owner_id="owner_1")],
+            "paging": {"cursors": {"after": "CURSOR_2"}},
         }
-
         second_response = {
-            "data": [
-                {
-                    "id": "media_2",
-                    "permalink": "https://instagram.com/p/2",
-                    "owner_id": "owner_2",
-                    "has_permission_for_partnership_ad": True,
-                    "eligibility_errors": [],
-                }
-            ],
+            "data": [_cd_item("media_2", owner_id="owner_2")],
             "paging": {},
         }
 
@@ -495,30 +484,40 @@ class TestFetchAllAdvertisableMedias:
 
         partnership_ads_booster.fetch_all_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
-            mock_creator_username,
-            "test_output.csv",
+            creator_username=mock_creator_username,
+            output_csv="test_output.csv",
         )
 
         assert mock_get.call_count == 2
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    @patch("builtins.open", new_callable=mock_open)
     def test_fetch_all_advertisable_medias_api_error(
-        self, mock_get, mock_access_token, mock_ig_account_id, mock_creator_username
+        self,
+        mock_file,
+        mock_get,
+        mock_access_token,
+        mock_business_id,
+        mock_ig_account_id,
+        mock_creator_username,
     ):
         mock_response = MagicMock()
         mock_response.status_code = 400
         mock_response.text = "Bad Request"
         mock_get.return_value = mock_response
 
-        with pytest.raises(SystemExit) as exc_info:
-            partnership_ads_booster.fetch_all_advertisable_medias(
-                mock_access_token,
-                mock_ig_account_id,
-                mock_creator_username,
-                "test_output.csv",
-            )
-        assert exc_info.value.code == 1
+        # 4xx errors are handled gracefully: empty result, no CSV written
+        partnership_ads_booster.fetch_all_advertisable_medias(
+            mock_access_token,
+            mock_business_id,
+            mock_ig_account_id,
+            creator_username=mock_creator_username,
+            output_csv="test_output.csv",
+        )
+
+        mock_file.assert_not_called()
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
     @patch("builtins.open", new_callable=mock_open)
@@ -527,6 +526,7 @@ class TestFetchAllAdvertisableMedias:
         mock_file,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_creator_username,
     ):
@@ -537,9 +537,10 @@ class TestFetchAllAdvertisableMedias:
 
         partnership_ads_booster.fetch_all_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
-            mock_creator_username,
-            "test_output.csv",
+            creator_username=mock_creator_username,
+            output_csv="test_output.csv",
         )
 
         mock_file.assert_not_called()
@@ -551,6 +552,7 @@ class TestFetchAllAdvertisableMedias:
         mock_file,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         sample_media_response,
     ):
@@ -560,7 +562,11 @@ class TestFetchAllAdvertisableMedias:
         mock_get.return_value = mock_response
 
         partnership_ads_booster.fetch_all_advertisable_medias(
-            mock_access_token, mock_ig_account_id, None, "test_output.csv"
+            mock_access_token,
+            mock_business_id,
+            mock_ig_account_id,
+            creator_username=None,
+            output_csv="test_output.csv",
         )
 
         mock_get.assert_called_once()
@@ -575,36 +581,17 @@ class TestFetchAllAdvertisableMedias:
         mock_file,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_creator_username,
     ):
         """Test that limit parameter correctly limits the number of fetched medias"""
-        # Create response with 5 medias across 2 pages
         first_response = {
-            "data": [
-                {
-                    "id": f"media_{i}",
-                    "permalink": f"https://instagram.com/p/{i}",
-                    "owner_id": f"owner_{i}",
-                    "has_permission_for_partnership_ad": True,
-                    "eligibility_errors": [],
-                }
-                for i in range(3)
-            ],
-            "paging": {"next": "https://graph.facebook.com/v22.0/next_page"},
+            "data": [_cd_item(f"media_{i}", owner_id=f"owner_{i}") for i in range(3)],
+            "paging": {"cursors": {"after": "CURSOR_2"}},
         }
-
         second_response = {
-            "data": [
-                {
-                    "id": f"media_{i}",
-                    "permalink": f"https://instagram.com/p/{i}",
-                    "owner_id": f"owner_{i}",
-                    "has_permission_for_partnership_ad": True,
-                    "eligibility_errors": [],
-                }
-                for i in range(3, 6)
-            ],
+            "data": [_cd_item(f"media_{i}", owner_id=f"owner_{i}") for i in range(3, 6)],
             "paging": {},
         }
 
@@ -621,16 +608,16 @@ class TestFetchAllAdvertisableMedias:
         # Set limit to 2, should only get 2 medias
         partnership_ads_booster.fetch_all_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
-            mock_creator_username,
-            "test_output.csv",
+            creator_username=mock_creator_username,
+            output_csv="test_output.csv",
             limit=2,
         )
 
         # Should only make 1 API call since limit is reached after first response
         assert mock_get.call_count == 1
 
-        # Verify output file was written with limited results
         handle = mock_file()
         written_content = "".join(call.args[0] for call in handle.write.call_args_list)
         # Should contain media_0 and media_1 but not media_2
@@ -645,33 +632,17 @@ class TestFetchAllAdvertisableMedias:
         mock_file,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_creator_username,
     ):
         """Test that when limit is None, all medias are fetched"""
         first_response = {
-            "data": [
-                {
-                    "id": "media_1",
-                    "permalink": "https://instagram.com/p/1",
-                    "owner_id": "owner_1",
-                    "has_permission_for_partnership_ad": True,
-                    "eligibility_errors": [],
-                }
-            ],
-            "paging": {"next": "https://graph.facebook.com/v22.0/next_page"},
+            "data": [_cd_item("media_1", owner_id="owner_1")],
+            "paging": {"cursors": {"after": "CURSOR_2"}},
         }
-
         second_response = {
-            "data": [
-                {
-                    "id": "media_2",
-                    "permalink": "https://instagram.com/p/2",
-                    "owner_id": "owner_2",
-                    "has_permission_for_partnership_ad": True,
-                    "eligibility_errors": [],
-                }
-            ],
+            "data": [_cd_item("media_2", owner_id="owner_2")],
             "paging": {},
         }
 
@@ -688,16 +659,16 @@ class TestFetchAllAdvertisableMedias:
         # No limit - should fetch all pages
         partnership_ads_booster.fetch_all_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
-            mock_creator_username,
-            "test_output.csv",
+            creator_username=mock_creator_username,
+            output_csv="test_output.csv",
             limit=None,
         )
 
         # Should make 2 API calls to get all pages
         assert mock_get.call_count == 2
 
-        # Verify both medias are in output
         handle = mock_file()
         written_content = "".join(call.args[0] for call in handle.write.call_args_list)
         assert "media_1" in written_content
@@ -710,6 +681,7 @@ class TestFetchAllAdvertisableMedias:
         mock_file,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_creator_username,
         sample_media_response,
@@ -722,9 +694,10 @@ class TestFetchAllAdvertisableMedias:
 
         partnership_ads_booster.fetch_all_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
-            mock_creator_username,
-            "test_output.csv",
+            creator_username=mock_creator_username,
+            output_csv="test_output.csv",
             only_with_permission=True,
         )
 
@@ -734,44 +707,49 @@ class TestFetchAllAdvertisableMedias:
         assert "media_123" in written_content
         assert "media_456" not in written_content
 
-    @patch("stats_for_dashboards.partnership_ads_booster.fetch_media_insights")
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
     @patch("builtins.open", new_callable=mock_open)
     def test_fetch_all_advertisable_medias_with_engagement_metrics(
         self,
         mock_file,
         mock_get,
-        mock_fetch_insights,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_creator_username,
-        sample_media_response,
     ):
-        """Test that include_engagement_metrics fetches and includes metrics"""
+        """Test that include_engagement_metrics requests organic insights and includes them"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = sample_media_response
+        mock_response.json.return_value = {
+            "data": [
+                _cd_item(
+                    "media_123",
+                    owner_id="owner_123",
+                    organic={"likes": 100, "comments": 10},
+                ),
+            ],
+            "paging": {},
+        }
         mock_get.return_value = mock_response
-
-        # Mock fetch_media_insights to return metrics
-        mock_fetch_insights.return_value = {"likes": 100, "comments": 10}
 
         partnership_ads_booster.fetch_all_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
-            mock_creator_username,
-            "test_output.csv",
+            creator_username=mock_creator_username,
+            output_csv="test_output.csv",
             include_engagement_metrics=True,
         )
 
-        # Verify fetch_media_insights was called for each media
-        assert mock_fetch_insights.call_count == 2
+        # organic_insights should be requested in the fields param
+        call_args = mock_get.call_args
+        assert "organic_insights" in call_args[1]["params"]["fields"]
 
         handle = mock_file()
         written_content = "".join(call.args[0] for call in handle.write.call_args_list)
-        # Verify metrics columns are in output
         assert "likes" in written_content
-        assert "comments" in written_content
+        assert "100" in written_content
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
     @patch("builtins.open", new_callable=mock_open)
@@ -780,11 +758,12 @@ class TestFetchAllAdvertisableMedias:
         mock_file,
         mock_get,
         mock_access_token,
+        mock_business_id,
         mock_ig_account_id,
         mock_creator_username,
         sample_media_response,
     ):
-        """Test that metrics columns are not included when include_engagement_metrics is False"""
+        """Test that organic insights are not requested when metrics are disabled"""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = sample_media_response
@@ -792,19 +771,15 @@ class TestFetchAllAdvertisableMedias:
 
         partnership_ads_booster.fetch_all_advertisable_medias(
             mock_access_token,
+            mock_business_id,
             mock_ig_account_id,
-            mock_creator_username,
-            "test_output.csv",
+            creator_username=mock_creator_username,
+            output_csv="test_output.csv",
             include_engagement_metrics=False,
         )
 
-        handle = mock_file()
-        written_content = "".join(call.args[0] for call in handle.write.call_args_list)
-        # Verify the header row doesn't include likes/comments columns
-        lines = written_content.split('\n')
-        header = lines[0] if lines else ""
-        assert "likes" not in header.split(',')
-        assert "comments" not in header.split(',')
+        call_args = mock_get.call_args
+        assert "organic_insights" not in call_args[1]["params"]["fields"]
 
 
 class TestFetchBrandedContentAdvertisableMedias:
@@ -819,9 +794,10 @@ class TestFetchBrandedContentAdvertisableMedias:
         mock_response.json.return_value = {
             "data": [
                 {
-                    "id": "media_123",
-                    "has_permission_for_partnership_ad": True,
-                    "eligibility_errors": [],
+                    "content_id": "media_123",
+                    "partnership_info": [
+                        {"permission_status": "authorized", "ad_eligibility": "ad_ready"}
+                    ],
                 }
             ]
         }
@@ -842,7 +818,7 @@ class TestFetchBrandedContentAdvertisableMedias:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "data": [{"id": "media_123", "permalink": "https://instagram.com/p/abc123"}]
+            "data": [{"content_id": "media_123", "permalink": "https://instagram.com/p/abc123"}]
         }
         mock_get.return_value = mock_response
 
