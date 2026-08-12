@@ -1997,12 +1997,13 @@ class TestCopyAdSet:
         assert copied_id == "copied_999"
         assert err is None
         assert mock_post.call_count == 2
-        # First call is the copy
+        # First call is the copy (sent as form body via data=, not query params)
         assert "/111/copies" in mock_post.call_args_list[0].args[0]
-        assert mock_post.call_args_list[0].kwargs["params"]["status_option"] == "PAUSED"
-        # Second call is the rename
+        assert mock_post.call_args_list[0].kwargs["data"]["status_option"] == "PAUSED"
+        assert mock_post.call_args_list[0].kwargs["data"]["deep_copy"] == "false"
+        # Second call is the rename (also via data=)
         assert "/copied_999" in mock_post.call_args_list[1].args[0]
-        assert mock_post.call_args_list[1].kwargs["params"]["name"] == "My Copy"
+        assert mock_post.call_args_list[1].kwargs["data"]["name"] == "My Copy"
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
     def test_copy_ad_set_success_no_rename(self, mock_post, mock_access_token):

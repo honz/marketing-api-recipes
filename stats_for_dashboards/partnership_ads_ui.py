@@ -579,20 +579,19 @@ def main():
                             temp_output_create,
                         )
 
-                        # Read results with string dtypes for ID columns
-                        # Use str dtype mapping that tolerates missing columns (e.g.
-                        # older CSVs without copy_ad_set_id / effective_ad_set_id)
-                        # and fills missing ad_set_id so downstream slicing does
-                        # not raise "['ad_set_id'] not in index".
                         # Results CSV may lack optional columns (copy path not used,
                         # legacy media_id/owner_id omitted, etc.) — back-fill them
                         # so downstream pandas slicing never hits "['X'] not in index".
+                        # Use keep_default_na=False so IDs like "NA" aren't parsed as NaN,
+                        # then only replace genuine nulls.
                         results_df = pd.read_csv(temp_output_create, dtype=str, keep_default_na=False)
-                        for _c in ('ad_set_id', 'copy_ad_set_id', 'ad_set_rename', 'effective_ad_set_id', 'media_id', 'owner_id', 'video_id', 'creative_id', 'published_ad_id'):
+                        for _c in ('ad_set_id', 'copy_ad_set_id', 'ad_set_rename', 'effective_ad_set_id', 'original_ad_set_id', 'media_id', 'owner_id', 'video_id', 'creative_id', 'published_ad_id', 'status', 'error', 'ad_name'):
                             if _c not in results_df.columns:
                                 results_df[_c] = ""
                             else:
-                                results_df[_c] = results_df[_c].astype(str).replace('nan', '')
+                                results_df[_c] = results_df[_c].where(results_df[_c].notna(), "").astype(str)
+                        # Defensive: normalise status for downstream checks even if CSV was hand-edited
+                        results_df["status"] = results_df["status"].astype(str).str.strip().str.lower()
 
                         # Calculate statistics
                         successful = len(
@@ -837,9 +836,8 @@ def main():
                                 # Show errors if any
                                 if failed > 0:
                                     st.subheader("❌ Failed Requests")
-                                    failed_df = results_df[results_df["status"] == "failed"][
-                                        ["creator_instagram_account", "creator_instagram_username", "error"]
-                                    ]
+                                    _perm_err_cols = [c for c in ["creator_instagram_account", "creator_instagram_username", "error"] if c in results_df.columns]
+                                    failed_df = results_df[results_df["status"] == "failed"][_perm_err_cols]
                                     st.dataframe(failed_df, width='stretch')
 
                                 # Download button

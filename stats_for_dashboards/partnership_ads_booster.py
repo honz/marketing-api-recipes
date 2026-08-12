@@ -1089,14 +1089,15 @@ def copy_ad_set(
     }
     # Keep the copy under the same campaign, paused by default.
     # deep_copy=false (default) keeps behaviour minimal - only the ad set,
-    # not its child ads.
-    params = {
+    # not its child ads.  Values are sent as lowercase strings and via
+    # form body so Graph parses them reliably.
+    data = {
         "status_option": "PAUSED",
-        "deep_copy": False,
+        "deep_copy": "false",
     }
 
     try:
-        response = requests.post(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
+        response = requests.post(url, headers=headers, data=data, verify=get_ssl_verify_from_env())
         response_data = response.json() if response.content else {}
         if response.status_code == 200:
             # Successful copy returns { copied_adset_id: "...", ad_object_ids: [...] }
@@ -1124,7 +1125,7 @@ def copy_ad_set(
                     rename_resp = requests.post(
                         rename_url,
                         headers=headers,
-                        params={"name": new_name},
+                        data={"name": new_name},
                         verify=get_ssl_verify_from_env(),
                     )
                     if rename_resp.status_code == 200:
@@ -1135,7 +1136,9 @@ def copy_ad_set(
                             f"Warning: Failed to rename copied ad set {copied_id} to '{new_name}': "
                             f"{rename_resp.status_code} - {rename_resp.text}"
                         )
-                except requests.exceptions.RequestException as e:
+                except Exception as e:
+                    # Must not discard a successful copy - any exception during
+                    # the best-effort rename is logged and the copy is kept.
                     print(f"Warning: Rename request error for {copied_id}: {e}")
 
             return copied_id, None
@@ -1267,11 +1270,11 @@ def create_partnership_ads_from_csv(
 
             permalink = (row.get("permalink", "") or "").strip()
             ad_code = (row.get("ad_code", "") or "").strip()
-            cta_type = (row.get("cta_type", "") or "").strip() or row.get("cta_type")
-            link = (row.get("link", "") or "").strip() or row.get("link")
+            cta_type = (row.get("cta_type", "") or "").strip()
+            link = (row.get("link", "") or "").strip()
             app_link = (row.get("app_link", "") or "").strip()
             app_id = (row.get("app_id", "") or "").strip()
-            ad_name = (row.get("ad_name", "") or "").strip() or row.get("ad_name")
+            ad_name = (row.get("ad_name", "") or "").strip()
             ad_set_id = (row.get("ad_set_id", "") or "").strip()
             product_set_id = (row.get("product_set_id", "") or "").strip()
             utm_parameters = (row.get("utm_parameters", "") or "").strip()
@@ -1312,15 +1315,17 @@ def create_partnership_ads_from_csv(
                     output_rows.append(output_row)
                     continue
                 effective_ad_set_id = copied_id
-                # Persist for output visibility; do not clobber the user's original
-                # ad_set_id column - keep both so the CSV is auditable.
+                # Preserve original ad_set_id for auditability when it was supplied.
+                if ad_set_id and "original_ad_set_id" not in output_row:
+                    output_row["original_ad_set_id"] = ad_set_id
                 output_row["effective_ad_set_id"] = effective_ad_set_id
                 output_row["ad_set_id"] = effective_ad_set_id
                 print(f"Using copied ad set {effective_ad_set_id} for ad '{ad_name}'")
             else:
-                # Ensure effective column is present for uniform output schema
-                if "effective_ad_set_id" not in output_row:
-                    output_row["effective_ad_set_id"] = effective_ad_set_id or ""
+                # Non-copy path: effective_ad_set_id should mirror ad_set_id (or be
+                # empty when ad_set_id itself is missing). The ID-injection loop
+                # above already created the key as "", so overwrite it here.
+                output_row["effective_ad_set_id"] = effective_ad_set_id or ""
 
             # ad_set_rename without copy_ad_set_id is ignored (no-op) but not an error.
             if ad_set_rename and not copy_ad_set_id:
@@ -1518,7 +1523,17 @@ def create_partnership_ads_from_csv(
                 output_row["published_ad_id"] = published_ad_id or ""
                 output_rows.append(output_row)
 
-        fieldnames = list(output_rows[0].keys()) if output_rows else []
+        # Union of all keys so the output header is stable even when
+        # different input rows had different columns (e.g. some rows omit
+        # optional fields like media_id/owner_id/ad_set_rename).
+        fieldnames: list[str] = []
+        if output_rows:
+            seen: set[str] = set()
+            for r in output_rows:
+                for k in r.keys():
+                    if k not in seen:
+                        seen.add(k)
+                        fieldnames.append(k)
         with open(output_csv, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
