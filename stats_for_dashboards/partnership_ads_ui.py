@@ -580,17 +580,18 @@ def main():
                         )
 
                         # Read results with string dtypes for ID columns
-                        results_df = pd.read_csv(
-                            temp_output_create,
-                            dtype={
-                                'ad_set_id': str,
-                                'video_id': str,
-                                'creative_id': str,
-                                'published_ad_id': str,
-                                'media_id': str,
-                                'owner_id': str,
-                            }
-                        )
+                        # Use str dtype mapping that tolerates missing columns (e.g.
+                        # older CSVs without copy_ad_set_id / effective_ad_set_id)
+                        # and fills missing ad_set_id so downstream slicing does
+                        # not raise "['ad_set_id'] not in index".
+                        results_df = pd.read_csv(temp_output_create)
+                        if 'ad_set_id' not in results_df.columns:
+                            results_df['ad_set_id'] = ""
+                        for _c in ('copy_ad_set_id', 'ad_set_rename', 'effective_ad_set_id'):
+                            if _c not in results_df.columns:
+                                results_df[_c] = ""
+                        for _c in ('ad_set_id', 'copy_ad_set_id', 'ad_set_rename', 'effective_ad_set_id', 'video_id', 'creative_id', 'published_ad_id', 'media_id', 'owner_id'):
+                            results_df[_c] = results_df[_c].astype(str).replace('nan', '')
 
                         # Calculate statistics
                         successful = len(
@@ -614,9 +615,8 @@ def main():
                         # Show errors if any
                         if failed > 0:
                             st.subheader("❌ Failed Ads")
-                            failed_df = results_df[results_df["status"] == "failed"][
-                                ["ad_name", "ad_set_id", "error"]
-                            ]
+                            _err_cols = [c for c in ["ad_name", "ad_set_id", "copy_ad_set_id", "ad_set_rename", "error"] if c in results_df.columns]
+                            failed_df = results_df[results_df["status"] == "failed"][_err_cols]
                             st.dataframe(failed_df, width='stretch')
 
                         # Download button

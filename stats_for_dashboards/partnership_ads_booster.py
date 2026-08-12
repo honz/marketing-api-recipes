@@ -1219,6 +1219,14 @@ def create_partnership_ads_from_csv(
             print(f"\n[{idx}/{len(rows)}] Processing: {row.get('ad_name', 'Unknown')}")
 
             output_row = row.copy()
+            # Ensure output row always exposes the ad-set columns even when the
+            # input CSV omits ad_set_id (it is optional when copy_ad_set_id is used).
+            # Without this the output CSV lacks the column and downstream pandas
+            # code (`df[["ad_name","ad_set_id","error"]]`) raises
+            # "['ad_set_id'] not in index".
+            for _col in ("ad_set_id", "copy_ad_set_id", "ad_set_rename", "effective_ad_set_id"):
+                if _col not in output_row:
+                    output_row[_col] = ""
 
             permalink = (row.get("permalink", "") or "").strip()
             ad_code = (row.get("ad_code", "") or "").strip()
@@ -1236,6 +1244,11 @@ def create_partnership_ads_from_csv(
             multi_advertiser_ads = (row.get("multi_advertiser_ads", "") or "").strip()
             copy_ad_set_id = (row.get("copy_ad_set_id", "") or "").strip()
             ad_set_rename = (row.get("ad_set_rename", "") or "").strip()
+            # Canonicalise the stored values so the output CSV is consistent
+            # regardless of whether the columns were present in the input.
+            output_row["ad_set_id"] = ad_set_id
+            output_row["copy_ad_set_id"] = copy_ad_set_id
+            output_row["ad_set_rename"] = ad_set_rename
 
             # If copy_ad_set_id is provided, duplicate that ad set under the same
             # campaign (POST /{ad-set-id}/copies) and use the new ID as effective

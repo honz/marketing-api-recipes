@@ -1977,6 +1977,188 @@ class TestCreatePartnershipAdsFromCsv:
         )
 
 
+class TestCopyAdSet:
+    """Tests for copy_ad_set (POST /{ad-set-id}/copies) and create_partnership_ads_from_csv copy path"""
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_copy_ad_set_success_with_rename(self, mock_post, mock_access_token):
+        """copy_ad_set should POST to /{id}/copies and then rename via POST /{copied_id} when new_name is given"""
+        copy_resp = MagicMock()
+        copy_resp.status_code = 200
+        copy_resp.content = b'{"copied_adset_id":"copied_999"}'
+        copy_resp.text = '{"copied_adset_id":"copied_999"}'
+        copy_resp.json.return_value = {"copied_adset_id": "copied_999"}
+        rename_resp = MagicMock()
+        rename_resp.status_code = 200
+        rename_resp.json.return_value = {"success": True}
+        mock_post.side_effect = [copy_resp, rename_resp]
+
+        copied_id, err = partnership_ads_booster.copy_ad_set(mock_access_token, "111", new_name="My Copy")
+        assert copied_id == "copied_999"
+        assert err is None
+        assert mock_post.call_count == 2
+        # First call is the copy
+        assert "/111/copies" in mock_post.call_args_list[0].args[0]
+        assert mock_post.call_args_list[0].kwargs["params"]["status_option"] == "PAUSED"
+        # Second call is the rename
+        assert "/copied_999" in mock_post.call_args_list[1].args[0]
+        assert mock_post.call_args_list[1].kwargs["params"]["name"] == "My Copy"
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_copy_ad_set_success_no_rename(self, mock_post, mock_access_token):
+        copy_resp = MagicMock()
+        copy_resp.status_code = 200
+        copy_resp.content = b'{"copied_adset_id":"copied_999"}'
+        copy_resp.text = '{"copied_adset_id":"copied_999"}'
+        copy_resp.json.return_value = {"copied_adset_id": "copied_999"}
+        mock_post.return_value = copy_resp
+
+        copied_id, err = partnership_ads_booster.copy_ad_set(mock_access_token, "111")
+        assert copied_id == "copied_999"
+        assert err is None
+        assert mock_post.call_count == 1
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_copy_ad_set_rename_failure_is_non_fatal(self, mock_post, mock_access_token):
+        copy_resp = MagicMock()
+        copy_resp.status_code = 200
+        copy_resp.content = b'{"copied_adset_id":"copied_999"}'
+        copy_resp.text = '{"copied_adset_id":"copied_999"}'
+        copy_resp.json.return_value = {"copied_adset_id": "copied_999"}
+        rename_resp = MagicMock()
+        rename_resp.status_code = 400
+        rename_resp.text = "Bad Request"
+        mock_post.side_effect = [copy_resp, rename_resp]
+
+        copied_id, err = partnership_ads_booster.copy_ad_set(mock_access_token, "111", new_name="My Copy")
+        # Rename failure must not discard the copy
+        assert copied_id == "copied_999"
+        assert err is None
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_copy_ad_set_api_error(self, mock_post, mock_access_token):
+        resp = MagicMock()
+        resp.status_code = 400
+        resp.text = "Bad Request"
+        resp.json.return_value = {"error": "Bad Request"}
+        resp.content = b'{"error":"Bad Request"}'
+        mock_post.return_value = resp
+
+        copied_id, err = partnership_ads_booster.copy_ad_set(mock_access_token, "bad_id")
+        assert copied_id is None
+        assert "400" in err
+
+    @patch("stats_for_dashboards.partnership_ads_booster.copy_ad_set")
+    @patch("stats_for_dashboards.partnership_ads_booster.create_ad")
+    @patch("stats_for_dashboards.partnership_ads_booster.create_ad_creative")
+    @patch("stats_for_dashboards.partnership_ads_booster.upload_instagram_video")
+    @patch("stats_for_dashboards.partnership_ads_booster.fetch_branded_content_advertisable_medias")
+    def test_copy_path_makes_ad_set_id_optional(self, mock_fetch, mock_upload, mock_creative, mock_ad, mock_copy,
+                                                  mock_access_token, mock_business_id, mock_ig_account_id, mock_ad_account_id, mock_facebook_page_id, tmp_path):
+        """Input CSV without ad_set_id but with copy_ad_set_id must not raise KeyError and must use the copied ID"""
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+        with open(input_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["permalink", "copy_ad_set_id", "ad_set_rename", "cta_type", "link", "ad_name"])
+            writer.writerow(["https://www.instagram.com/p/abc123/", "111", "My Copy", "LEARN_MORE", "https://example.com", "Ad via copy"])
+        mock_fetch.return_value = {"id": "media_1", "has_permission_for_partnership_ad": True, "eligibility_errors": []}
+        mock_upload.return_value = ("vid1", None)
+        mock_creative.return_value = ("cre1", None)
+        mock_ad.return_value = ("ad1", None)
+        mock_copy.return_value = ("copied_999", None)
+
+        # Must not raise KeyError: "['ad_set_id'] not in index" — that was the reported bug:
+        # output rows lacked ad_set_id when the input CSV had no such column.
+        partnership_ads_booster.create_partnership_ads_from_csv(
+            mock_access_token, mock_business_id, mock_ig_account_id, mock_ad_account_id, mock_facebook_page_id,
+            str(input_csv), str(output_csv))
+
+        mock_copy.assert_called_once_with(mock_access_token, "111", new_name="My Copy")
+        # create_ad must receive the copied ID, not an empty string
+        assert mock_ad.call_args.args[3] == "copied_999"
+        # Output CSV must contain ad_set_id / effective_ad_set_id / copy columns
+        assert output_csv.exists()
+        with open(output_csv, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            assert len(rows) == 1
+            assert rows[0]["ad_set_id"] == "copied_999"
+            assert rows[0]["effective_ad_set_id"] == "copied_999"
+            assert rows[0]["copy_ad_set_id"] == "111"
+            assert rows[0]["status"] == "success"
+            assert "ad_set_id" in reader.fieldnames
+            assert "effective_ad_set_id" in reader.fieldnames
+
+    def test_copy_failure_short_circuits_and_surfaces_error(self, mock_access_token, mock_business_id, mock_ig_account_id, mock_ad_account_id, mock_facebook_page_id, tmp_path):
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+        with open(input_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["permalink", "copy_ad_set_id", "cta_type", "link", "ad_name"])
+            writer.writerow(["https://www.instagram.com/p/abc123/", "bad_id", "LEARN_MORE", "https://example.com", "Fail copy"])
+        with patch("stats_for_dashboards.partnership_ads_booster.copy_ad_set", return_value=(None, "Ad set copy failed for bad_id: 400 - Invalid")) as mock_copy:
+            partnership_ads_booster.create_partnership_ads_from_csv(
+                mock_access_token, mock_business_id, mock_ig_account_id, mock_ad_account_id, mock_facebook_page_id,
+                str(input_csv), str(output_csv))
+            mock_copy.assert_called_once()
+        # Row must be failed and error must mention copy; also ad_set_id must exist in output header
+        assert output_csv.exists()
+        with open(output_csv, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            assert len(rows) == 1
+            assert rows[0]["status"] == "failed"
+            assert "copy" in rows[0]["error"].lower()
+            assert "ad_set_id" in reader.fieldnames
+
+    @patch("stats_for_dashboards.partnership_ads_booster.copy_ad_set")
+    @patch("stats_for_dashboards.partnership_ads_booster.create_ad")
+    @patch("stats_for_dashboards.partnership_ads_booster.create_ad_creative")
+    @patch("stats_for_dashboards.partnership_ads_booster.upload_instagram_video")
+    @patch("stats_for_dashboards.partnership_ads_booster.fetch_branded_content_advertisable_medias")
+    def test_ad_set_rename_without_copy_is_ignored(self, mock_fetch, mock_upload, mock_creative, mock_ad, mock_copy,
+                                                      mock_access_token, mock_business_id, mock_ig_account_id, mock_ad_account_id, mock_facebook_page_id, tmp_path):
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+        with open(input_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["permalink", "ad_set_id", "ad_set_rename", "cta_type", "link", "ad_name"])
+            writer.writerow(["https://www.instagram.com/p/abc123/", "222", "Ignored Name", "LEARN_MORE", "https://example.com", "Ad normal"])
+        mock_fetch.return_value = {"id": "media_1", "has_permission_for_partnership_ad": True, "eligibility_errors": []}
+        mock_upload.return_value = ("vid1", None)
+        mock_creative.return_value = ("cre1", None)
+        mock_ad.return_value = ("ad1", None)
+
+        partnership_ads_booster.create_partnership_ads_from_csv(
+            mock_access_token, mock_business_id, mock_ig_account_id, mock_ad_account_id, mock_facebook_page_id,
+            str(input_csv), str(output_csv))
+
+        mock_copy.assert_not_called()
+        mock_ad.assert_called_once()
+        assert mock_ad.call_args.args[3] == "222"
+
+    def test_missing_ad_set_id_without_copy_is_reported_clearly(self, mock_access_token, mock_business_id, mock_ig_account_id, mock_ad_account_id, mock_facebook_page_id, tmp_path):
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+        with open(input_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["permalink", "cta_type", "link", "ad_name"])
+            writer.writerow(["https://www.instagram.com/p/abc123/", "LEARN_MORE", "https://example.com", "Ad no adset"])
+        partnership_ads_booster.create_partnership_ads_from_csv(
+            mock_access_token, mock_business_id, mock_ig_account_id, mock_ad_account_id, mock_facebook_page_id,
+            str(input_csv), str(output_csv))
+        assert output_csv.exists()
+        with open(output_csv, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            assert len(rows) == 1
+            assert rows[0]["status"] == "failed"
+            assert "ad_set_id" in rows[0]["error"].lower()
+            assert "copy_ad_set_id" in rows[0]["error"].lower()
+            assert "ad_set_id" in reader.fieldnames
+
+
 class TestMain:
     """Tests for main function"""
 
