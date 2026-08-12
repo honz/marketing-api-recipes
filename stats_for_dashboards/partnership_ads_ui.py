@@ -555,15 +555,15 @@ def main():
                         with open(temp_input, "wb") as f:
                             f.write(uploaded_file.getbuffer())
 
-                        # Show input preview - read with string dtypes for ID columns
-                        input_df = pd.read_csv(
-                            temp_input,
-                            dtype={
-                                'ad_set_id': str,
-                                'media_id': str,
-                                'owner_id': str,
-                            }
-                        )
+                        # Show input preview - tolerant of missing ID columns
+                        # (e.g. ad_set_id is optional when copy_ad_set_id is used;
+                        #  media_id/owner_id are legacy optional columns).
+                        # Using dtype={...: str} with a missing column can raise;
+                        # read normally then normalise.
+                        input_df = pd.read_csv(temp_input, dtype=str, keep_default_na=False)
+                        for _c in ('ad_set_id', 'copy_ad_set_id', 'ad_set_rename', 'effective_ad_set_id', 'media_id', 'owner_id'):
+                            if _c not in input_df.columns:
+                                input_df[_c] = ""
                         st.subheader("Input CSV Preview")
                         st.dataframe(input_df.head(10), width='stretch')
                         st.info(f"📊 Total rows to process: {len(input_df)}")
@@ -584,14 +584,15 @@ def main():
                         # older CSVs without copy_ad_set_id / effective_ad_set_id)
                         # and fills missing ad_set_id so downstream slicing does
                         # not raise "['ad_set_id'] not in index".
-                        results_df = pd.read_csv(temp_output_create)
-                        if 'ad_set_id' not in results_df.columns:
-                            results_df['ad_set_id'] = ""
-                        for _c in ('copy_ad_set_id', 'ad_set_rename', 'effective_ad_set_id'):
+                        # Results CSV may lack optional columns (copy path not used,
+                        # legacy media_id/owner_id omitted, etc.) — back-fill them
+                        # so downstream pandas slicing never hits "['X'] not in index".
+                        results_df = pd.read_csv(temp_output_create, dtype=str, keep_default_na=False)
+                        for _c in ('ad_set_id', 'copy_ad_set_id', 'ad_set_rename', 'effective_ad_set_id', 'media_id', 'owner_id', 'video_id', 'creative_id', 'published_ad_id'):
                             if _c not in results_df.columns:
                                 results_df[_c] = ""
-                        for _c in ('ad_set_id', 'copy_ad_set_id', 'ad_set_rename', 'effective_ad_set_id', 'video_id', 'creative_id', 'published_ad_id', 'media_id', 'owner_id'):
-                            results_df[_c] = results_df[_c].astype(str).replace('nan', '')
+                            else:
+                                results_df[_c] = results_df[_c].astype(str).replace('nan', '')
 
                         # Calculate statistics
                         successful = len(

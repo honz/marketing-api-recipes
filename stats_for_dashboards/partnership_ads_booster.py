@@ -1219,12 +1219,13 @@ def create_partnership_ads_from_csv(
             print(f"\n[{idx}/{len(rows)}] Processing: {row.get('ad_name', 'Unknown')}")
 
             output_row = row.copy()
-            # Ensure output row always exposes the ad-set columns even when the
-            # input CSV omits ad_set_id (it is optional when copy_ad_set_id is used).
-            # Without this the output CSV lacks the column and downstream pandas
-            # code (`df[["ad_name","ad_set_id","error"]]`) raises
-            # "['ad_set_id'] not in index".
-            for _col in ("ad_set_id", "copy_ad_set_id", "ad_set_rename", "effective_ad_set_id"):
+            # Ensure output row always exposes ID columns even when the input
+            # CSV omits them. ad_set_id is optional when copy_ad_set_id is
+            # used; media_id/owner_id are legacy optional columns. Without
+            # this the output CSV lacks the column and downstream pandas
+            # code (`df[["ad_name","ad_set_id","error"]]` or similar slices
+            # involving media_id/owner_id) raises "['X'] not in index".
+            for _col in ("ad_set_id", "copy_ad_set_id", "ad_set_rename", "effective_ad_set_id", "media_id", "owner_id"):
                 if _col not in output_row:
                     output_row[_col] = ""
 
