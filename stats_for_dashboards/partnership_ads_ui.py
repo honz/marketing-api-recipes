@@ -475,7 +475,7 @@ def main():
             - `cta_type`: Call to action type (e.g., "INSTALL_MOBILE_APP", "LEARN_MORE")
             - `link`: CTA link (mandatory)
             - `ad_name`: Name for the ad
-            - `ad_set_id`: Ad set ID (must be text, not number)
+            - `ad_set_id`: Ad set ID (must be text, not number) — **optional if `copy_ad_set_id` is provided**
             - **Either** `permalink` OR `ad_code` (at least one is required)
 
             **Optional:**
@@ -487,6 +487,8 @@ def main():
             - `source_url`: Source URL for the creative
             - `identities`: Controls which identities to display in the ad. Values (case insensitive): `BOTH` (default, both identities), `FIRST` (first identity only), `DYNAMIC` (system optimizes)
             - `multi_advertiser_ads`: Controls multi-advertiser ads enrollment. Values (case insensitive): `OPT_OUT` (to disable multi-advertiser ads), `OPT_IN` (to enable, default behavior)
+            - `copy_ad_set_id`: Source ad set ID to duplicate via `POST /{ad_set_id}/copies`. When set, a copy is created **in the same campaign** and its ID is used as `ad_set_id` for ad creation, so `ad_set_id` becomes optional.
+            - `ad_set_rename`: Exact name for the newly copied ad set. Only used when `copy_ad_set_id` is provided; the copy is renamed to this value.
 
             **Note:** Stories URLs are not supported and will be rejected.
             """
