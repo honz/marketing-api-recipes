@@ -1140,7 +1140,43 @@ def copy_ad_set(
 
             return copied_id, None
         else:
-            error = f"Ad set copy failed for {source_ad_set_id}: {response.status_code} - {response.text}"
+            # Try to surface a human-readable message from the Graph error envelope.
+            # This error in particular (code 100, subcode 2490392, blame
+            # instagram_positions) means the source ad set has an invalid
+            # placement combo — e.g. Instagram Explore Home without
+            # Instagram Explore. The copy inherits the source targeting, so
+            # the validation fails on the copy request itself.
+            detailed = response.text
+            try:
+                err = response_data.get("error", {}) if isinstance(response_data, dict) else {}
+                parts = []
+                if err.get("message"):
+                    parts.append(err["message"])
+                if err.get("error_user_title"):
+                    parts.append(err["error_user_title"])
+                if err.get("error_user_msg"):
+                    parts.append(err["error_user_msg"])
+                if err.get("error_subcode"):
+                    parts.append(f"subcode {err['error_subcode']}")
+                if err.get("error_data"):
+                    parts.append(f"error_data={err['error_data']}")
+                if parts:
+                    detailed = " | ".join(str(p) for p in parts) + f" | raw: {response.text}"
+                # Placement-specific hint
+                if err.get("error_subcode") == 2490392 or "instagram_positions" in response.text:
+                    detailed += (
+                        " — Hint: source ad set has inconsistent Instagram placements"
+                        " (e.g. 'Instagram Explore Home' requires 'Instagram Explore')."
+                        " Fix the source ad set in Ads Manager: Edit Placements →"
+                        " Instagram → check 'Instagram Explore' (or switch to"
+                        " Advantage+ placements), then retry. Via API: GET"
+                        f" /{source_ad_set_id}?fields=targeting{{publisher_platforms,instagram_positions}}"
+                        " and PATCH targeting.instagram_positions to include"
+                        " 'instagram_explore' alongside 'instagram_explore_home'."
+                    )
+            except Exception:
+                pass
+            error = f"Ad set copy failed for {source_ad_set_id}: {response.status_code} - {detailed}"
             print(f"Error: {error}")
             return None, error
     except requests.exceptions.RequestException as e:
