@@ -475,7 +475,7 @@ def main():
             - `cta_type`: Call to action type (e.g., "INSTALL_MOBILE_APP", "LEARN_MORE")
             - `link`: CTA link (mandatory)
             - `ad_name`: Name for the ad
-            - `ad_set_id`: Ad set ID (must be text, not number)
+            - `ad_set_id`: Ad set ID (must be text, not number) — **optional if `copy_ad_set_id` is provided**
             - **Either** `permalink` OR `ad_code` (at least one is required)
 
             **Optional:**
@@ -487,6 +487,8 @@ def main():
             - `source_url`: Source URL for the creative
             - `identities`: Controls which identities to display in the ad. Values (case insensitive): `BOTH` (default, both identities), `FIRST` (first identity only), `DYNAMIC` (system optimizes)
             - `multi_advertiser_ads`: Controls multi-advertiser ads enrollment. Values (case insensitive): `OPT_OUT` (to disable multi-advertiser ads), `OPT_IN` (to enable, default behavior)
+            - `copy_ad_set_id`: Source ad set ID to duplicate via `POST /{ad_set_id}/copies`. When set, a copy is created **in the same campaign** and its ID is used as `ad_set_id` for ad creation, so `ad_set_id` becomes optional.
+            - `ad_set_rename`: Exact name for the newly copied ad set. Only used when `copy_ad_set_id` is provided; the copy is renamed to this value.
 
             **Note:** Stories URLs are not supported and will be rejected.
             """
@@ -553,15 +555,15 @@ def main():
                         with open(temp_input, "wb") as f:
                             f.write(uploaded_file.getbuffer())
 
-                        # Show input preview - read with string dtypes for ID columns
-                        input_df = pd.read_csv(
-                            temp_input,
-                            dtype={
-                                'ad_set_id': str,
-                                'media_id': str,
-                                'owner_id': str,
-                            }
-                        )
+                        # Show input preview - tolerant of missing ID columns
+                        # (e.g. ad_set_id is optional when copy_ad_set_id is used;
+                        #  media_id/owner_id are legacy optional columns).
+                        # Using dtype={...: str} with a missing column can raise;
+                        # read normally then normalise.
+                        input_df = pd.read_csv(temp_input, dtype=str, keep_default_na=False)
+                        for _c in ('ad_set_id', 'copy_ad_set_id', 'ad_set_rename', 'effective_ad_set_id', 'media_id', 'owner_id'):
+                            if _c not in input_df.columns:
+                                input_df[_c] = ""
                         st.subheader("Input CSV Preview")
                         st.dataframe(input_df.head(10), width='stretch')
                         st.info(f"📊 Total rows to process: {len(input_df)}")
@@ -577,18 +579,19 @@ def main():
                             temp_output_create,
                         )
 
-                        # Read results with string dtypes for ID columns
-                        results_df = pd.read_csv(
-                            temp_output_create,
-                            dtype={
-                                'ad_set_id': str,
-                                'video_id': str,
-                                'creative_id': str,
-                                'published_ad_id': str,
-                                'media_id': str,
-                                'owner_id': str,
-                            }
-                        )
+                        # Results CSV may lack optional columns (copy path not used,
+                        # legacy media_id/owner_id omitted, etc.) — back-fill them
+                        # so downstream pandas slicing never hits "['X'] not in index".
+                        # Use keep_default_na=False so IDs like "NA" aren't parsed as NaN,
+                        # then only replace genuine nulls.
+                        results_df = pd.read_csv(temp_output_create, dtype=str, keep_default_na=False)
+                        for _c in ('ad_set_id', 'copy_ad_set_id', 'ad_set_rename', 'effective_ad_set_id', 'original_ad_set_id', 'media_id', 'owner_id', 'video_id', 'creative_id', 'published_ad_id', 'status', 'error', 'ad_name'):
+                            if _c not in results_df.columns:
+                                results_df[_c] = ""
+                            else:
+                                results_df[_c] = results_df[_c].where(results_df[_c].notna(), "").astype(str)
+                        # Defensive: normalise status for downstream checks even if CSV was hand-edited
+                        results_df["status"] = results_df["status"].astype(str).str.strip().str.lower()
 
                         # Calculate statistics
                         successful = len(
@@ -612,9 +615,8 @@ def main():
                         # Show errors if any
                         if failed > 0:
                             st.subheader("❌ Failed Ads")
-                            failed_df = results_df[results_df["status"] == "failed"][
-                                ["ad_name", "ad_set_id", "error"]
-                            ]
+                            _err_cols = [c for c in ["ad_name", "ad_set_id", "copy_ad_set_id", "ad_set_rename", "error"] if c in results_df.columns]
+                            failed_df = results_df[results_df["status"] == "failed"][_err_cols]
                             st.dataframe(failed_df, width='stretch')
 
                         # Download button
@@ -834,9 +836,8 @@ def main():
                                 # Show errors if any
                                 if failed > 0:
                                     st.subheader("❌ Failed Requests")
-                                    failed_df = results_df[results_df["status"] == "failed"][
-                                        ["creator_instagram_account", "creator_instagram_username", "error"]
-                                    ]
+                                    _perm_err_cols = [c for c in ["creator_instagram_account", "creator_instagram_username", "error"] if c in results_df.columns]
+                                    failed_df = results_df[results_df["status"] == "failed"][_perm_err_cols]
                                     st.dataframe(failed_df, width='stretch')
 
                                 # Download button

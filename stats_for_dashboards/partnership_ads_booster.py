@@ -1059,6 +1059,139 @@ def create_ad(
     )
 
 
+def copy_ad_set(
+    access_token: str,
+    source_ad_set_id: str,
+    new_name: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Create a copy of an existing ad set via POST /{ad-set-id}/copies.
+
+    The copy is created under the same campaign (no campaign_id override).
+    If new_name is provided the copied ad set is renamed to that value
+    via a follow-up update call (POST /{copied_id} with name).
+
+    API Reference: POST /{ad_set_id}/copies
+        https://developers.facebook.com/documentation/ads-commerce/marketing-api/reference/ad-campaign/copies
+
+    Args:
+        access_token: Facebook/Instagram access token
+        source_ad_set_id: Source ad set ID to copy (numeric string)
+        new_name: Optional exact name for the copied ad set (ad_set_rename)
+
+    Returns:
+        Tuple of (copied_ad_set_id or None, error message or None)
+    """
+    url = f"https://graph.facebook.com/v25.0/{source_ad_set_id}/copies"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}",
+    }
+    # Keep the copy under the same campaign, paused by default.
+    # deep_copy=false (default) keeps behaviour minimal - only the ad set,
+    # not its child ads.  Values are sent as lowercase strings and via
+    # form body so Graph parses them reliably.
+    data = {
+        "status_option": "PAUSED",
+        "deep_copy": "false",
+    }
+
+    try:
+        response = requests.post(url, headers=headers, data=data, verify=get_ssl_verify_from_env())
+        response_data = response.json() if response.content else {}
+        if response.status_code == 200:
+            # Successful copy returns { copied_adset_id: "...", ad_object_ids: [...] }
+            copied_id = (
+                response_data.get("copied_adset_id")
+                or response_data.get("copied_ad_set_id")
+                or response_data.get("id")
+            )
+            if not copied_id:
+                # Some versions wrap under `data`
+                data = response_data.get("data", {})
+                if isinstance(data, dict):
+                    copied_id = data.get("copied_adset_id") or data.get("id")
+            if not copied_id:
+                error = f"Copy succeeded but no copied_adset_id in response: {response.text}"
+                print(f"Error: {error}")
+                return None, error
+            print(f"Ad set {source_ad_set_id} copied to {copied_id}")
+
+            # Rename the copy if a new name was requested
+            if new_name:
+                # Rename is a field update on the AdSet node -> POST with `name` param
+                rename_url = f"https://graph.facebook.com/v25.0/{copied_id}"
+                try:
+                    rename_resp = requests.post(
+                        rename_url,
+                        headers=headers,
+                        data={"name": new_name},
+                        verify=get_ssl_verify_from_env(),
+                    )
+                    if rename_resp.status_code == 200:
+                        print(f"Renamed copied ad set {copied_id} to '{new_name}'")
+                    else:
+                        # Rename failure is non-fatal - keep the copied ID but surface warning
+                        print(
+                            f"Warning: Failed to rename copied ad set {copied_id} to '{new_name}': "
+                            f"{rename_resp.status_code} - {rename_resp.text}"
+                        )
+                except Exception as e:
+                    # Must not discard a successful copy - any exception during
+                    # the best-effort rename is logged and the copy is kept.
+                    print(f"Warning: Rename request error for {copied_id}: {e}")
+
+            return copied_id, None
+        else:
+            # Try to surface a human-readable message from the Graph error envelope.
+            # This error in particular (code 100, subcode 2490392, blame
+            # instagram_positions) means the source ad set has an invalid
+            # placement combo — e.g. Instagram Explore Home without
+            # Instagram Explore. The copy inherits the source targeting, so
+            # the validation fails on the copy request itself.
+            detailed = response.text
+            try:
+                err = response_data.get("error", {}) if isinstance(response_data, dict) else {}
+                parts = []
+                if err.get("message"):
+                    parts.append(err["message"])
+                if err.get("error_user_title"):
+                    parts.append(err["error_user_title"])
+                if err.get("error_user_msg"):
+                    parts.append(err["error_user_msg"])
+                if err.get("error_subcode"):
+                    parts.append(f"subcode {err['error_subcode']}")
+                if err.get("error_data"):
+                    parts.append(f"error_data={err['error_data']}")
+                if parts:
+                    detailed = " | ".join(str(p) for p in parts) + f" | raw: {response.text}"
+                # Placement-specific hint
+                if err.get("error_subcode") == 2490392 or "instagram_positions" in response.text:
+                    detailed += (
+                        " — Hint: source ad set has inconsistent Instagram placements"
+                        " (e.g. 'Instagram Explore Home' requires 'Instagram Explore')."
+                        " Fix the source ad set in Ads Manager: Edit Placements →"
+                        " Instagram → check 'Instagram Explore' (or switch to"
+                        " Advantage+ placements), then retry. Via API: GET"
+                        f" /{source_ad_set_id}?fields=targeting{{publisher_platforms,instagram_positions}}"
+                        " and PATCH targeting.instagram_positions to include"
+                        " 'instagram_explore' alongside 'instagram_explore_home'."
+                    )
+            except Exception:
+                pass
+            error = f"Ad set copy failed for {source_ad_set_id}: {response.status_code} - {detailed}"
+            print(f"Error: {error}")
+            return None, error
+    except requests.exceptions.RequestException as e:
+        error = f"Ad set copy request error for {source_ad_set_id}: {e}"
+        print(error)
+        return None, error
+    except Exception as e:
+        error = f"Ad set copy unknown error for {source_ad_set_id}: {e}"
+        print(error)
+        return None, error
+
+
 def create_partnership_ads_from_csv(
     access_token: str,
     business_id: str,
@@ -1074,7 +1207,14 @@ def create_partnership_ads_from_csv(
     The input CSV should have the following columns:
     - permalink: Media permalink or shortcode (either permalink or ad_code is required)
     - ad_code: Ad code if available (either permalink or ad_code is required)
-    - ad_set_id: Ad set ID to create ad under (must be entered as text, not number)
+    - ad_set_id: Ad set ID to create ad under (must be entered as text, not number).
+                 Optional if copy_ad_set_id is provided - a copy will be created
+                 and used as the effective ad_set_id.
+    - copy_ad_set_id (optional): Source ad set ID to duplicate via POST /{ad_set_id}/copies.
+                 When provided a new ad set is created under the same campaign and
+                 its ID is used as ad_set_id for ad creation. This makes ad_set_id optional.
+    - ad_set_rename (optional): Exact name for the copied ad set. Only used when
+                 copy_ad_set_id is provided. The copy is renamed to this value.
     - cta_type: Call to action type (e.g., "INSTALL_MOBILE_APP", "LEARN_MORE")
     - link: CTA link (mandatory)
     - app_link: CTA app link (optional)
@@ -1118,32 +1258,94 @@ def create_partnership_ads_from_csv(
             print(f"\n[{idx}/{len(rows)}] Processing: {row.get('ad_name', 'Unknown')}")
 
             output_row = row.copy()
+            # Ensure output row always exposes ID columns even when the input
+            # CSV omits them. ad_set_id is optional when copy_ad_set_id is
+            # used; media_id/owner_id are legacy optional columns. Without
+            # this the output CSV lacks the column and downstream pandas
+            # code (`df[["ad_name","ad_set_id","error"]]` or similar slices
+            # involving media_id/owner_id) raises "['X'] not in index".
+            for _col in ("ad_set_id", "copy_ad_set_id", "ad_set_rename", "effective_ad_set_id", "media_id", "owner_id"):
+                if _col not in output_row:
+                    output_row[_col] = ""
 
-            permalink = row.get("permalink", "")
-            ad_code = row.get("ad_code", "")
-            cta_type = row.get("cta_type")
-            link = row.get("link")
-            app_link = row.get("app_link", "")
-            app_id = row.get("app_id", "")
-            ad_name = row.get("ad_name")
-            ad_set_id = row.get("ad_set_id")
-            product_set_id = row.get("product_set_id", "")
-            utm_parameters = row.get("utm_parameters", "")
-            testimonial = row.get("testimonial", "")
-            source_url = row.get("source_url", "")
-            identities = row.get("identities", "")
-            multi_advertiser_ads = row.get("multi_advertiser_ads", "")
+            permalink = (row.get("permalink", "") or "").strip()
+            ad_code = (row.get("ad_code", "") or "").strip()
+            cta_type = (row.get("cta_type", "") or "").strip()
+            link = (row.get("link", "") or "").strip()
+            app_link = (row.get("app_link", "") or "").strip()
+            app_id = (row.get("app_id", "") or "").strip()
+            ad_name = (row.get("ad_name", "") or "").strip()
+            ad_set_id = (row.get("ad_set_id", "") or "").strip()
+            product_set_id = (row.get("product_set_id", "") or "").strip()
+            utm_parameters = (row.get("utm_parameters", "") or "").strip()
+            testimonial = (row.get("testimonial", "") or "").strip()
+            source_url = (row.get("source_url", "") or "").strip()
+            identities = (row.get("identities", "") or "").strip()
+            multi_advertiser_ads = (row.get("multi_advertiser_ads", "") or "").strip()
+            copy_ad_set_id = (row.get("copy_ad_set_id", "") or "").strip()
+            ad_set_rename = (row.get("ad_set_rename", "") or "").strip()
+            # Canonicalise the stored values so the output CSV is consistent
+            # regardless of whether the columns were present in the input.
+            output_row["ad_set_id"] = ad_set_id
+            output_row["copy_ad_set_id"] = copy_ad_set_id
+            output_row["ad_set_rename"] = ad_set_rename
 
+            # If copy_ad_set_id is provided, duplicate that ad set under the same
+            # campaign (POST /{ad-set-id}/copies) and use the new ID as effective
+            # ad_set_id.  When ad_set_rename is also provided the copy is renamed
+            # to that exact value.  This makes ad_set_id optional when copying.
+            effective_ad_set_id = ad_set_id
+            if copy_ad_set_id:
+                print(f"Copying ad set {copy_ad_set_id} (rename='{ad_set_rename}')...")
+                copied_id, copy_error = copy_ad_set(
+                    access_token,
+                    copy_ad_set_id,
+                    new_name=ad_set_rename if ad_set_rename else None,
+                )
+                if not copied_id:
+                    error_msg = copy_error or f"Failed to copy ad set {copy_ad_set_id}"
+                    print(f"Error: {error_msg}")
+                    output_row["status"] = "failed"
+                    output_row["error"] = error_msg
+                    output_row["video_id"] = ""
+                    output_row["creative_id"] = ""
+                    output_row["published_ad_id"] = ""
+                    # Persist copy columns for debugging even on failure
+                    output_row["effective_ad_set_id"] = ""
+                    output_rows.append(output_row)
+                    continue
+                effective_ad_set_id = copied_id
+                # Preserve original ad_set_id for auditability when it was supplied.
+                if ad_set_id and "original_ad_set_id" not in output_row:
+                    output_row["original_ad_set_id"] = ad_set_id
+                output_row["effective_ad_set_id"] = effective_ad_set_id
+                output_row["ad_set_id"] = effective_ad_set_id
+                print(f"Using copied ad set {effective_ad_set_id} for ad '{ad_name}'")
+            else:
+                # Non-copy path: effective_ad_set_id should mirror ad_set_id (or be
+                # empty when ad_set_id itself is missing). The ID-injection loop
+                # above already created the key as "", so overwrite it here.
+                output_row["effective_ad_set_id"] = effective_ad_set_id or ""
+
+            # ad_set_rename without copy_ad_set_id is ignored (no-op) but not an error.
+            if ad_set_rename and not copy_ad_set_id:
+                print(f"Warning: ad_set_rename='{ad_set_rename}' ignored because copy_ad_set_id is empty for ad '{ad_name}'")
+
+            # ad_set_id is required unless copy_ad_set_id supplied a replacement
             required_fields = {
                 "cta_type": cta_type,
                 "link": link,
                 "ad_name": ad_name,
-                "ad_set_id": ad_set_id,
+                "ad_set_id": effective_ad_set_id,
             }
 
             missing_fields = [k for k, v in required_fields.items() if not v]
             if missing_fields:
-                error_msg = f"Missing required fields: {', '.join(missing_fields)}"
+                # Provide a helpful hint when ad_set_id is the missing field
+                if "ad_set_id" in missing_fields and not copy_ad_set_id:
+                    error_msg = "Missing required fields: ad_set_id (or provide copy_ad_set_id to auto-copy an ad set)"
+                else:
+                    error_msg = f"Missing required fields: {', '.join(missing_fields)}"
                 print(f"Error: {error_msg}")
                 output_row["status"] = "failed"
                 output_row["error"] = error_msg
@@ -1163,6 +1365,9 @@ def create_partnership_ads_from_csv(
                 output_row["published_ad_id"] = ""
                 output_rows.append(output_row)
                 continue
+
+            # From here on use the resolved ad set ID
+            ad_set_id = effective_ad_set_id
 
             video_id = None
             video_error = None
@@ -1318,7 +1523,17 @@ def create_partnership_ads_from_csv(
                 output_row["published_ad_id"] = published_ad_id or ""
                 output_rows.append(output_row)
 
-        fieldnames = list(output_rows[0].keys()) if output_rows else []
+        # Union of all keys so the output header is stable even when
+        # different input rows had different columns (e.g. some rows omit
+        # optional fields like media_id/owner_id/ad_set_rename).
+        fieldnames: list[str] = []
+        if output_rows:
+            seen: set[str] = set()
+            for r in output_rows:
+                for k in r.keys():
+                    if k not in seen:
+                        seen.add(k)
+                        fieldnames.append(k)
         with open(output_csv, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
