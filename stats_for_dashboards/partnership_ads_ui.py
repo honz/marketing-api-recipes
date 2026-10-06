@@ -479,8 +479,9 @@ def main():
             - **Either** `permalink` OR `ad_code` (at least one is required)
 
             **Optional:**
-            - `app_link`: CTA app link
-            - `app_id`: App ID for app events tracking
+            - `app_link`: CTA app/universal link. The tool reads the ad set's `promoted_object.omnichannel_object`; for web + app, this link is applied to every supported platform.
+            - `app_id`: App ID for app events tracking (optional; unrelated to the web + app creative configuration).
+            - `applink_treatment`: Optional routing override: `automatic`, `deeplink_with_web_fallback`, `deeplink_with_appstore_fallback`, or `web_only`. Web + app defaults to `deeplink_with_web_fallback`.
             - `product_set_id`: Product set ID
             - `utm_parameters`: UTM parameters in query string format (e.g., `utm_source=instagram&utm_medium=paid`)
             - `testimonial`: Testimonial text for the ad

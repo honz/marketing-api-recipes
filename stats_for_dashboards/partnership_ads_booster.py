@@ -28,12 +28,20 @@ import os
 import re
 import sys
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import requests
 
 # Maps CSV identities values to API ad_format integers
 # 1 = both identities (default), 2 = first identity only, 3 = dynamic optimization
 IDENTITIES_MAP = {"both": 1, "first": 2, "dynamic": 3}
+APPLINK_TREATMENTS = {
+    "automatic",
+    "deeplink_with_appstore_fallback",
+    "deeplink_with_web_fallback",
+    "web_only",
+}
+DEFAULT_APPLINK_TREATMENT = "deeplink_with_web_fallback"
 
 
 def get_ssl_verify_from_env() -> bool:
@@ -847,6 +855,109 @@ def upload_instagram_video(
         return None, error
 
 
+def fetch_ad_set_omnichannel_config(
+    access_token: str, ad_set_id: str
+) -> Tuple[Optional[Dict[str, object]], Optional[str], bool]:
+    """Fetch creative destination inputs and whether omnichannel was detected."""
+    url = f"https://graph.facebook.com/v23.0/{ad_set_id}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {"fields": "promoted_object"}
+
+    try:
+        response = requests.get(
+            url,
+            headers=headers,
+            params=params,
+            verify=get_ssl_verify_from_env(),
+        )
+    except requests.exceptions.RequestException as e:
+        error = f"Ad set lookup request error for {ad_set_id}: {e}"
+        print(f"Error: {error}")
+        return None, error, False
+
+    if response.status_code != 200:
+        error = (
+            f"Failed to fetch promoted_object for ad set {ad_set_id}: "
+            f"{response.status_code} - {response.text}"
+        )
+        print(f"Error: {error}")
+        return None, error, False
+
+    try:
+        response_data = response.json()
+    except ValueError:
+        error = (
+            f"Ad set lookup returned invalid JSON for {ad_set_id}: "
+            f"{response.status_code} - {response.text[:200]}"
+        )
+        print(f"Error: {error}")
+        return None, error, False
+
+    if not isinstance(response_data, dict):
+        error = f"Ad set lookup returned an invalid response for {ad_set_id}"
+        print(f"Error: {error}")
+        return None, error, False
+
+    promoted_object = response_data.get("promoted_object") or {}
+    if not isinstance(promoted_object, dict):
+        error = f"Ad set {ad_set_id} returned an invalid promoted_object"
+        print(f"Error: {error}")
+        return None, error, False
+
+    omnichannel_object = promoted_object.get("omnichannel_object")
+    if not omnichannel_object:
+        return None, None, False
+    if not isinstance(omnichannel_object, dict):
+        error = f"Ad set {ad_set_id} returned an invalid omnichannel_object"
+        print(f"Error: {error}")
+        return None, error, True
+
+    app_objects = omnichannel_object.get("app", [])
+    if not isinstance(app_objects, list) or not app_objects:
+        error = f"Ad set {ad_set_id} has omnichannel_object without app data"
+        print(f"Error: {error}")
+        return None, error, True
+
+    for app_object in app_objects:
+        if not isinstance(app_object, dict):
+            continue
+        application_id = app_object.get("application_id")
+        object_store_urls = app_object.get("object_store_urls", [])
+        if not isinstance(object_store_urls, list):
+            continue
+        platforms = sorted(
+            {
+                platform
+                for store_url in object_store_urls
+                if (platform := infer_app_platform(store_url))
+            }
+        )
+        if application_id and platforms:
+            return {
+                "application_id": str(application_id),
+                "platforms": platforms,
+            }, None, True
+
+    error = (
+        f"Ad set {ad_set_id} has incomplete omnichannel app data: "
+        "application_id and supported App Store or Google Play URLs are required"
+    )
+    print(f"Error: {error}")
+    return None, error, True
+
+
+def infer_app_platform(store_url: object) -> Optional[str]:
+    """Infer the app platform from an App Store or Google Play URL."""
+    if not isinstance(store_url, str):
+        return None
+    hostname = (urlparse(store_url).hostname or "").lower()
+    if hostname == "play.google.com":
+        return "android"
+    if hostname in {"apps.apple.com", "itunes.apple.com"}:
+        return "ios"
+    return None
+
+
 def create_ad_creative(
     access_token: str,
     ad_account_id: str,
@@ -863,6 +974,8 @@ def create_ad_creative(
     source_url: Optional[str] = None,
     identities: Optional[str] = None,
     multi_advertiser_ads: Optional[str] = None,
+    omnichannel_config: Optional[Dict[str, object]] = None,
+    applink_treatment: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Create ad creative.
@@ -876,7 +989,7 @@ def create_ad_creative(
         ad_code: Ad code for partnership ad
         cta_type: Call to action type
         link: CTA link (mandatory)
-        app_link: CTA app link (optional)
+        app_link: App or universal link used for app destinations (optional)
         product_set_id: Product set ID (optional)
         utm_parameters: UTM parameters in query string format (optional)
         testimonial: Testimonial text for the ad (optional)
@@ -887,6 +1000,10 @@ def create_ad_creative(
         multi_advertiser_ads: Controls multi-advertiser ads enrollment (optional).
             Values (case insensitive): OPT_OUT (to disable multi-advertiser ads),
             OPT_IN (to enable, default behavior).
+        omnichannel_config: Ad-set application ID and supported platforms for
+            web + app delivery. None keeps the existing app-only behavior.
+        applink_treatment: App-link routing override (optional). Defaults to
+            deeplink_with_web_fallback.
 
     Returns:
         Tuple of (Creative ID or None, Error message or None)
@@ -913,6 +1030,39 @@ def create_ad_creative(
             "value": cta_value,
         }
     )
+
+    if app_link and omnichannel_config:
+        normalized_treatment = (
+            applink_treatment or DEFAULT_APPLINK_TREATMENT
+        ).strip().lower()
+        if normalized_treatment not in APPLINK_TREATMENTS:
+            valid_values = ", ".join(sorted(APPLINK_TREATMENTS))
+            error = (
+                f"Invalid applink_treatment '{applink_treatment}'. "
+                f"Valid values: {valid_values}"
+            )
+            print(f"Error: {error}")
+            return None, error
+        params["applink_treatment"] = normalized_treatment
+
+        application_id = omnichannel_config.get("application_id")
+        platforms = omnichannel_config.get("platforms", [])
+        if not application_id or not platforms:
+            error = "Invalid omnichannel_config: application_id and platforms required"
+            print(f"Error: {error}")
+            return None, error
+
+        platform_specs = {
+            str(platform): {"url": app_link} for platform in platforms
+        }
+        omnichannel_link_spec = {
+            "web": {"url": link},
+            "app": {
+                "application_id": application_id,
+                "platform_specs": platform_specs,
+            },
+        }
+        params["omnichannel_link_spec"] = json.dumps(omnichannel_link_spec)
 
     branded_content = {}
     if ad_code:
@@ -1217,8 +1367,13 @@ def create_partnership_ads_from_csv(
                  copy_ad_set_id is provided. The copy is renamed to this value.
     - cta_type: Call to action type (e.g., "INSTALL_MOBILE_APP", "LEARN_MORE")
     - link: CTA link (mandatory)
-    - app_link: CTA app link (optional)
+    - app_link: CTA app/universal link (optional). App-only ads retain the
+              existing creative payload. For web + app ad sets, the same link is
+              applied to every platform in promoted_object.omnichannel_object.
     - app_id: App ID for app events tracking (optional)
+    - applink_treatment (optional): automatic, deeplink_with_web_fallback,
+              deeplink_with_appstore_fallback, or web_only. Defaults to
+              deeplink_with_web_fallback when the ad set is web + app.
     - ad_name: Name for the ad
     - product_set_id (optional): Product set ID
     - utm_parameters (optional): UTM parameters in query string format (e.g., 'utm_source=instagram&utm_medium=paid')
@@ -1254,6 +1409,7 @@ def create_partnership_ads_from_csv(
         print(f"Processing {len(rows)} rows...")
 
         output_rows = []
+        ad_set_omnichannel_configs: Dict[str, Optional[Dict[str, object]]] = {}
         for idx, row in enumerate(rows, 1):
             print(f"\n[{idx}/{len(rows)}] Processing: {row.get('ad_name', 'Unknown')}")
 
@@ -1274,6 +1430,9 @@ def create_partnership_ads_from_csv(
             link = (row.get("link", "") or "").strip()
             app_link = (row.get("app_link", "") or "").strip()
             app_id = (row.get("app_id", "") or "").strip()
+            applink_treatment = (row.get("applink_treatment", "") or "").strip()
+            if applink_treatment:
+                applink_treatment = applink_treatment.lower()
             ad_name = (row.get("ad_name", "") or "").strip()
             ad_set_id = (row.get("ad_set_id", "") or "").strip()
             product_set_id = (row.get("product_set_id", "") or "").strip()
@@ -1289,6 +1448,21 @@ def create_partnership_ads_from_csv(
             output_row["ad_set_id"] = ad_set_id
             output_row["copy_ad_set_id"] = copy_ad_set_id
             output_row["ad_set_rename"] = ad_set_rename
+
+            if applink_treatment and applink_treatment not in APPLINK_TREATMENTS:
+                valid_values = ", ".join(sorted(APPLINK_TREATMENTS))
+                error_msg = (
+                    f"Invalid applink_treatment '{applink_treatment}'. "
+                    f"Valid values: {valid_values}"
+                )
+                print(f"Error: {error_msg}")
+                output_row["status"] = "failed"
+                output_row["error"] = error_msg
+                output_row["video_id"] = ""
+                output_row["creative_id"] = ""
+                output_row["published_ad_id"] = ""
+                output_rows.append(output_row)
+                continue
 
             # If copy_ad_set_id is provided, duplicate that ad set under the same
             # campaign (POST /{ad-set-id}/copies) and use the new ID as effective
@@ -1368,6 +1542,33 @@ def create_partnership_ads_from_csv(
 
             # From here on use the resolved ad set ID
             ad_set_id = effective_ad_set_id
+
+            omnichannel_config = None
+            if app_link:
+                if ad_set_id in ad_set_omnichannel_configs:
+                    omnichannel_config = ad_set_omnichannel_configs[ad_set_id]
+                    omnichannel_error = None
+                else:
+                    (
+                        omnichannel_config,
+                        omnichannel_error,
+                        omnichannel_detected,
+                    ) = fetch_ad_set_omnichannel_config(access_token, ad_set_id)
+                    if not omnichannel_error:
+                        ad_set_omnichannel_configs[ad_set_id] = omnichannel_config
+                if omnichannel_error:
+                    if omnichannel_detected:
+                        output_row["status"] = "failed"
+                        output_row["error"] = omnichannel_error
+                        output_row["video_id"] = ""
+                        output_row["creative_id"] = ""
+                        output_row["published_ad_id"] = ""
+                        output_rows.append(output_row)
+                        continue
+                    print(
+                        f"Warning: {omnichannel_error}. "
+                        "Continuing with the legacy app-link payload."
+                    )
 
             video_id = None
             video_error = None
@@ -1479,6 +1680,10 @@ def create_partnership_ads_from_csv(
                     source_url if source_url else None,
                     identities if identities else None,
                     multi_advertiser_ads if multi_advertiser_ads else None,
+                    omnichannel_config=omnichannel_config,
+                    applink_treatment=(
+                        applink_treatment if applink_treatment else None
+                    ),
                 )
 
                 if not creative_id:
