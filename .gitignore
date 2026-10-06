@@ -14,3 +14,8 @@ cpas_demos/brand_portal/config.py
 cpas_demos/shared/.cpas_cache.db
 *.db-shm
 *.db-wal
+
+# Local Partnership Ads CSV inputs and generated outputs
+stats_for_dashboards/created_ads_output.csv
+stats_for_dashboards/input_Partnership*.csv
+stats_for_dashboards/output_*.csv

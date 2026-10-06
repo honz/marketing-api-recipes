@@ -909,6 +909,170 @@ class TestUploadInstagramVideo:
         assert "Bad Request" in error
 
 
+class TestFetchAdSetOmnichannelConfig:
+    """Tests for reading web + app configuration from promoted_object."""
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_web_and_app_config(self, mock_get, mock_access_token):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "promoted_object": {
+                "omnichannel_object": {
+                    "app": [
+                        {
+                            "application_id": "123456789",
+                            "object_store_urls": [
+                                "https://play.google.com/store/apps/details?id=com.example",
+                                "https://apps.apple.com/app/id123456789",
+                            ],
+                        }
+                    ],
+                    "pixel": [{"pixel_id": "987654321"}],
+                }
+            },
+        }
+        mock_get.return_value = mock_response
+
+        config, error, omnichannel_detected = (
+            partnership_ads_booster.fetch_ad_set_omnichannel_config(
+                mock_access_token, "adset_123"
+            )
+        )
+
+        assert config == {
+            "application_id": "123456789",
+            "platforms": ["android", "ios"],
+        }
+        assert error is None
+        assert omnichannel_detected is True
+        assert mock_get.call_args.kwargs["params"] == {
+            "fields": "promoted_object"
+        }
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_app_only_ignores_omnichannel_config(self, mock_get, mock_access_token):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"promoted_object": {}}
+        mock_get.return_value = mock_response
+
+        config, error, omnichannel_detected = (
+            partnership_ads_booster.fetch_ad_set_omnichannel_config(
+                mock_access_token, "adset_123"
+            )
+        )
+
+        assert config is None
+        assert error is None
+        assert omnichannel_detected is False
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_omnichannel_object_requires_app_data(
+        self, mock_get, mock_access_token
+    ):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "promoted_object": {"omnichannel_object": {"app": []}}
+        }
+        mock_get.return_value = mock_response
+
+        config, error, omnichannel_detected = (
+            partnership_ads_booster.fetch_ad_set_omnichannel_config(
+                mock_access_token, "adset_123"
+            )
+        )
+
+        assert config is None
+        assert "omnichannel_object without app data" in error
+        assert omnichannel_detected is True
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_uses_first_complete_app_entry(self, mock_get, mock_access_token):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "promoted_object": {
+                "omnichannel_object": {
+                    "app": [
+                        {"application_id": "incomplete", "object_store_urls": []},
+                        {
+                            "application_id": "complete",
+                            "object_store_urls": [
+                                "https://play.google.com/store/apps/details?id=com.example"
+                            ],
+                        },
+                    ]
+                }
+            }
+        }
+        mock_get.return_value = mock_response
+
+        config, error, omnichannel_detected = (
+            partnership_ads_booster.fetch_ad_set_omnichannel_config(
+                mock_access_token, "adset_123"
+            )
+        )
+
+        assert config == {
+            "application_id": "complete",
+            "platforms": ["android"],
+        }
+        assert error is None
+        assert omnichannel_detected is True
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_non_json_response_is_returned_as_lookup_error(
+        self, mock_get, mock_access_token
+    ):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "not-json"
+        mock_response.json.side_effect = ValueError("invalid JSON")
+        mock_get.return_value = mock_response
+
+        config, error, omnichannel_detected = (
+            partnership_ads_booster.fetch_ad_set_omnichannel_config(
+                mock_access_token, "adset_123"
+            )
+        )
+
+        assert config is None
+        assert "returned invalid JSON" in error
+        assert omnichannel_detected is False
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_request_error_is_returned_as_lookup_error(
+        self, mock_get, mock_access_token
+    ):
+        mock_get.side_effect = (
+            partnership_ads_booster.requests.exceptions.RequestException("timeout")
+        )
+
+        config, error, omnichannel_detected = (
+            partnership_ads_booster.fetch_ad_set_omnichannel_config(
+                mock_access_token, "adset_123"
+            )
+        )
+
+        assert config is None
+        assert "lookup request error" in error
+        assert omnichannel_detected is False
+
+    @pytest.mark.parametrize(
+        ("store_url", "expected"),
+        [
+            ("https://play.google.com/store/apps/details?id=com.example", "android"),
+            ("https://itunes.apple.com/app/id123", "ios"),
+            ("https://example.com/app", None),
+            (None, None),
+        ],
+    )
+    def test_infer_app_platform(self, store_url, expected):
+        assert partnership_ads_booster.infer_app_platform(store_url) == expected
+
+
 class TestCreateAdCreative:
     """Tests for create_ad_creative function"""
 
@@ -940,6 +1104,85 @@ class TestCreateAdCreative:
 
         assert creative_id == "creative_123"
         assert error is None
+        params = mock_post.call_args.kwargs["params"]
+        assert "applink_treatment" not in params
+        assert "asset_feed_spec" not in params
+        assert "omnichannel_link_spec" not in params
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_with_web_and_app_destination(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "creative_123"}
+        mock_post.return_value = mock_response
+
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,
+            "SHOP_NOW",
+            "https://example.com/products/123",
+            "myapp://products/123",
+            omnichannel_config={
+                "application_id": "123456789",
+                "platforms": ["android", "ios"],
+            },
+        )
+
+        assert creative_id == "creative_123"
+        assert error is None
+        params = mock_post.call_args.kwargs["params"]
+        assert params["applink_treatment"] == "deeplink_with_web_fallback"
+        assert "asset_feed_spec" not in params
+        omnichannel_spec = json.loads(params["omnichannel_link_spec"])
+        assert omnichannel_spec["web"]["url"] == (
+            "https://example.com/products/123"
+        )
+        assert omnichannel_spec["app"]["application_id"] == "123456789"
+        assert omnichannel_spec["app"]["platform_specs"] == {
+            "android": {"url": "myapp://products/123"},
+            "ios": {"url": "myapp://products/123"},
+        }
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_creative_rejects_invalid_applink_treatment(
+        self,
+        mock_post,
+        mock_access_token,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        mock_ig_account_id,
+    ):
+        creative_id, error = partnership_ads_booster.create_ad_creative(
+            mock_access_token,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            mock_ig_account_id,
+            "media_123",
+            None,
+            "SHOP_NOW",
+            "https://example.com/products/123",
+            "myapp://products/123",
+            omnichannel_config={
+                "application_id": "123456789",
+                "platforms": ["android", "ios"],
+            },
+            applink_treatment="invalid",
+        )
+
+        assert creative_id is None
+        assert "Invalid applink_treatment" in error
+        mock_post.assert_not_called()
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
     def test_create_creative_with_product_set(
@@ -1857,10 +2100,12 @@ class TestCreatePartnershipAdsFromCsv:
     @patch(
         "stats_for_dashboards.partnership_ads_booster.fetch_branded_content_advertisable_medias"
     )
+    @patch("stats_for_dashboards.partnership_ads_booster.fetch_ad_set_omnichannel_config")
     @patch("builtins.open", new_callable=mock_open)
     def test_create_partnership_ads_success(
         self,
         mock_file,
+        mock_omnichannel_config,
         mock_fetch,
         mock_upload,
         mock_creative,
@@ -1872,8 +2117,8 @@ class TestCreatePartnershipAdsFromCsv:
         mock_facebook_page_id,
         sample_csv_rows,
     ):
-        csv_content = "media_id,permalink,owner_id,has_permission_for_partnership_ad,eligibility_errors,ad_set_id,cta_type,link,app_link,ad_name,ad_code,product_set_id\n"
-        csv_content += "media_123,https://instagram.com/p/abc123,owner_123,True,[],adset_123,INSTALL_MOBILE_APP,https://app.link/install,myapp://landing,Test Ad 1,,\n"
+        csv_content = "media_id,permalink,owner_id,has_permission_for_partnership_ad,eligibility_errors,ad_set_id,cta_type,link,app_link,applink_treatment,ad_name,ad_code,product_set_id\n"
+        csv_content += "media_123,https://instagram.com/p/abc123,owner_123,True,[],adset_123,INSTALL_MOBILE_APP,https://example.com/product,myapp://product,automatic,Test Ad 1,,\n"
 
         mock_file.return_value.__enter__.return_value = StringIO(csv_content)
 
@@ -1885,6 +2130,11 @@ class TestCreatePartnershipAdsFromCsv:
         }
 
         # Mock functions to return tuples (value, error)
+        mock_omnichannel_config.return_value = (
+            {"application_id": "app_123", "platforms": ["android", "ios"]},
+            None,
+            True,
+        )
         mock_upload.return_value = ("video_123", None)
         mock_creative.return_value = ("creative_123", None)
         mock_ad.return_value = ("ad_123", None)
@@ -1901,8 +2151,124 @@ class TestCreatePartnershipAdsFromCsv:
 
         mock_fetch.assert_called_once()
         mock_upload.assert_called_once()
+        mock_omnichannel_config.assert_called_once_with(
+            mock_access_token, "adset_123"
+        )
         mock_creative.assert_called_once()
+        assert mock_creative.call_args.kwargs["omnichannel_config"] == {
+            "application_id": "app_123",
+            "platforms": ["android", "ios"],
+        }
+        assert mock_creative.call_args.kwargs["applink_treatment"] == "automatic"
         mock_ad.assert_called_once()
+        assert mock_ad.call_args.args[-1] is None
+
+    @patch("stats_for_dashboards.partnership_ads_booster.create_ad")
+    @patch("stats_for_dashboards.partnership_ads_booster.create_ad_creative")
+    @patch("stats_for_dashboards.partnership_ads_booster.upload_instagram_video")
+    @patch(
+        "stats_for_dashboards.partnership_ads_booster.fetch_branded_content_advertisable_medias"
+    )
+    @patch("stats_for_dashboards.partnership_ads_booster.fetch_ad_set_omnichannel_config")
+    def test_app_only_continues_when_omnichannel_lookup_fails(
+        self,
+        mock_omnichannel_config,
+        mock_fetch,
+        mock_upload,
+        mock_creative,
+        mock_ad,
+        mock_access_token,
+        mock_business_id,
+        mock_ig_account_id,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        tmp_path,
+    ):
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+        with open(input_csv, "w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(
+                [
+                    "permalink",
+                    "ad_set_id",
+                    "cta_type",
+                    "link",
+                    "app_link",
+                    "ad_name",
+                ]
+            )
+            writer.writerow(
+                [
+                    "https://instagram.com/p/abc123",
+                    "adset_123",
+                    "INSTALL_MOBILE_APP",
+                    "https://play.google.com/store/apps/details?id=com.example",
+                    "myapp://landing",
+                    "App-only ad",
+                ]
+            )
+
+        mock_omnichannel_config.return_value = (
+            None,
+            "Ad set lookup request error for adset_123: timeout",
+            False,
+        )
+        mock_fetch.return_value = {
+            "id": "media_123",
+            "has_permission_for_partnership_ad": True,
+            "eligibility_errors": [],
+        }
+        mock_upload.return_value = ("video_123", None)
+        mock_creative.return_value = ("creative_123", None)
+        mock_ad.return_value = ("ad_123", None)
+
+        partnership_ads_booster.create_partnership_ads_from_csv(
+            mock_access_token,
+            mock_business_id,
+            mock_ig_account_id,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            str(input_csv),
+            str(output_csv),
+        )
+
+        mock_omnichannel_config.assert_called_once_with(
+            mock_access_token, "adset_123"
+        )
+        assert mock_creative.call_args.kwargs["omnichannel_config"] is None
+        assert mock_ad.call_args.args[-1] is None
+
+    @patch("stats_for_dashboards.partnership_ads_booster.fetch_ad_set_omnichannel_config")
+    @patch("builtins.open", new_callable=mock_open)
+    def test_invalid_applink_treatment_fails_before_api_work(
+        self,
+        mock_file,
+        mock_omnichannel_config,
+        mock_access_token,
+        mock_business_id,
+        mock_ig_account_id,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+    ):
+        csv_content = (
+            "permalink,ad_set_id,cta_type,link,app_link,applink_treatment,ad_name\n"
+            "https://instagram.com/p/abc123,adset_123,SHOP_NOW,"
+            "https://example.com/product,myapp://product,invalid,Test Ad\n"
+        )
+        mock_file.return_value.__enter__.return_value = StringIO(csv_content)
+
+        partnership_ads_booster.create_partnership_ads_from_csv(
+            mock_access_token,
+            mock_business_id,
+            mock_ig_account_id,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            "input.csv",
+            "output.csv",
+        )
+
+        mock_omnichannel_config.assert_not_called()
 
     @patch("builtins.open", new_callable=mock_open)
     def test_create_partnership_ads_missing_fields(
