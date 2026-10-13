@@ -551,10 +551,10 @@ def fetch_page_of_advertisable_medias(
         }
         
         # Map ad_eligibility to eligibility_errors for backward compatibility
-        ad_eligibility = first_partnership.get("ad_eligibility", "")
+
         eligibility_errors = first_partnership.get("eligibility_errors", [])
-        if ad_eligibility and ad_eligibility.upper() != "AD_READY":
-            media["eligibility_errors"] = [f"Eligibility Errors: {eligibility_errors}"]
+
+        media["eligibility_errors"] = [f"Eligibility Errors: {eligibility_errors}"]
 
         medias.append(media)
 
@@ -796,12 +796,10 @@ def fetch_branded_content_advertisable_medias(
             }
             
             # Map ad_eligibility to eligibility_errors
-            ad_eligibility = first_partnership.get("ad_eligibility", "")
+
             eligibility_errors = first_partnership.get("eligibility_errors", [])
-            if ad_eligibility and ad_eligibility.upper() != "AD_READY":
-                legacy_format["eligibility_errors"] = [
-                    f"Eligibility errors: {eligibility_errors}"
-                ]
+
+            legacy_format["eligibility_errors"] = [f"Eligibility errors: {eligibility_errors}"]
 
             print(f"Eligibility: {legacy_format}")
             return legacy_format
