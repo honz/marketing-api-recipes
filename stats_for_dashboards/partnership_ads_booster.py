@@ -435,7 +435,7 @@ def fetch_page_of_advertisable_medias(
         "content_id,platform,media_type,post_type,caption,permalink,creation_time,"
         "author{display_name,ig_user_id,fb_page_id,profile_picture_url},"
         "is_recommended,ad_usage,"
-        "partnership_info{ad_eligibility,tagged_partner{display_name,ig_user_id,fb_page_id},"
+        "partnership_info{ad_eligibility,tagged_partner{display_name,ig_user_id,fb_page_id},eligibility_errors,"
         "permission_status,permission_type,ad_code,content_types}"
     )
     
@@ -551,10 +551,11 @@ def fetch_page_of_advertisable_medias(
         }
         
         # Map ad_eligibility to eligibility_errors for backward compatibility
-        ad_eligibility = first_partnership.get("ad_eligibility", "")
-        if ad_eligibility and ad_eligibility.upper() != "AD_READY":
-            media["eligibility_errors"] = [f"Ad eligibility: {ad_eligibility}"]
-        
+
+        eligibility_errors = first_partnership.get("eligibility_errors", [])
+
+        media["eligibility_errors"] = [f"Eligibility Errors: {eligibility_errors}"]
+
         medias.append(media)
 
     # Apply permission filter if requested (for backward compatibility)
@@ -762,7 +763,7 @@ def fetch_branded_content_advertisable_medias(
     params = {
         "ig_user_id": ig_user_id,
         "fields": (
-            "content_id,permalink,partnership_info{ad_eligibility,permission_status,ad_code},"
+            "content_id,permalink,partnership_info{ad_eligibility,permission_status,ad_code,eligibility_errors},"
             "author{ig_user_id,fb_page_id}"
         ),
     }
@@ -795,10 +796,11 @@ def fetch_branded_content_advertisable_medias(
             }
             
             # Map ad_eligibility to eligibility_errors
-            ad_eligibility = first_partnership.get("ad_eligibility", "")
-            if ad_eligibility and ad_eligibility.upper() != "AD_READY":
-                legacy_format["eligibility_errors"] = [f"Ad eligibility: {ad_eligibility}"]
-            
+
+            eligibility_errors = first_partnership.get("eligibility_errors", [])
+
+            legacy_format["eligibility_errors"] = [f"Eligibility errors: {eligibility_errors}"]
+
             print(f"Eligibility: {legacy_format}")
             return legacy_format
     else:
