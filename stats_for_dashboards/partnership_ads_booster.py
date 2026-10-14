@@ -550,11 +550,8 @@ def fetch_page_of_advertisable_medias(
             "saves": organic_insights.get("saves"),
         }
         
-        # Map ad_eligibility to eligibility_errors for backward compatibility
-
-        eligibility_errors = first_partnership.get("eligibility_errors", [])
-
-        media["eligibility_errors"] = [f"Eligibility Errors: {eligibility_errors}"]
+        # Keep eligibility errors as a flat list for backward compatibility.
+        media["eligibility_errors"] = first_partnership.get("eligibility_errors") or []
 
         medias.append(media)
 
@@ -795,11 +792,10 @@ def fetch_branded_content_advertisable_medias(
                 "eligibility_errors": [],
             }
             
-            # Map ad_eligibility to eligibility_errors
-
-            eligibility_errors = first_partnership.get("eligibility_errors", [])
-
-            legacy_format["eligibility_errors"] = [f"Eligibility errors: {eligibility_errors}"]
+            # Keep eligibility errors as a flat list for backward compatibility.
+            legacy_format["eligibility_errors"] = (
+                first_partnership.get("eligibility_errors") or []
+            )
 
             print(f"Eligibility: {legacy_format}")
             return legacy_format
@@ -1620,12 +1616,10 @@ def create_partnership_ads_from_csv(
                     eligibility_error = (
                         "Media does not have permission for partnership ads"
                     )
-                elif (
-                    eligibility.get("eligibility_errors")
-                    and len(eligibility.get("eligibility_errors", [])) > 0
-                ):
-                    errors = eligibility.get("eligibility_errors", [])
-                    eligibility_error = f"Eligibility errors: {', '.join(errors)}"
+                else:
+                    errors = eligibility.get("eligibility_errors") or []
+                    if errors:
+                        eligibility_error = f"Eligibility errors: {', '.join(errors)}"
 
                 if eligibility_error:
                     print(f"Eligibility check failed: {eligibility_error}")

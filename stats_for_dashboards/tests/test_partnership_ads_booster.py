@@ -230,6 +230,7 @@ class TestFetchPageOfAdvertisableMedias:
 
         assert len(medias) == 2
         assert medias[0]["id"] == "media_123"
+        assert medias[0]["eligibility_errors"] == []
         assert next_cursor == "CURSOR_NEXT"
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
@@ -796,7 +797,11 @@ class TestFetchBrandedContentAdvertisableMedias:
                 {
                     "content_id": "media_123",
                     "partnership_info": [
-                        {"permission_status": "authorized", "ad_eligibility": "ad_ready"}
+                        {
+                            "permission_status": "authorized",
+                            "ad_eligibility": "ad_ready",
+                            "eligibility_errors": [],
+                        }
                     ],
                 }
             ]
@@ -810,6 +815,34 @@ class TestFetchBrandedContentAdvertisableMedias:
         assert result is not None
         assert result["id"] == "media_123"
         assert result["has_permission_for_partnership_ad"] == True
+        assert result["eligibility_errors"] == []
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
+    def test_fetch_preserves_eligibility_errors(
+        self, mock_get, mock_access_token, mock_business_id, mock_ig_account_id
+    ):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": [
+                {
+                    "content_id": "media_123",
+                    "partnership_info": [
+                        {
+                            "permission_status": "authorized",
+                            "eligibility_errors": ["Media is not eligible"],
+                        }
+                    ],
+                }
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        result = partnership_ads_booster.fetch_branded_content_advertisable_medias(
+            mock_access_token, mock_business_id, mock_ig_account_id, ad_code="test_ad_code"
+        )
+
+        assert result["eligibility_errors"] == ["Media is not eligible"]
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.get")
     def test_fetch_with_permalinks_success(
