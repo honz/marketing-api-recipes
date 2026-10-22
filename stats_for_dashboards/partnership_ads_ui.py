@@ -248,11 +248,24 @@ def main():
                 export_data = []
                 for m in state['medias']:
                     row = {
-                        'media_id': m.get('id', ''),
-                        'permalink': m.get('permalink', ''),
-                        'owner_id': m.get('owner_id', ''),
-                        'has_permission_for_partnership_ad': m.get('has_permission_for_partnership_ad', False),
-                        'eligibility_errors': str(m.get('eligibility_errors', [])),
+                        # Keeping fields same as what is displayed in UI
+                        "content_id": m.get("id", ""),
+                        "platform": m.get("platform", ""),
+                        "media_type": m.get("media_type", ""),
+                        "post_type": m.get("post_type", ""),
+                        "link": m.get("permalink", ""),
+                        "caption": m.get("caption", ""),
+                        "creator": m.get("author_display_name", ""),
+                        "creator_id": m.get("owner_id", ""),
+                        "ad_eligibility": m.get("ad_eligibility", ""),
+                        "permission_status": m.get(
+                            "has_permission_for_partnership_ad", False
+                        ),
+                        "ad_usage": m.get("ad_usage", ""),
+                        "eligibility_errors": str(m.get("eligibility_errors", [])),
+                        "is_recommended": (
+                            "yes" if m.get("is_recommended", False) else "no"
+                        ),
                     }
                     # Include metrics columns if they exist
                     if 'likes' in m:
