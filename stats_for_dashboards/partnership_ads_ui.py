@@ -192,19 +192,23 @@ def main():
             with shortcut_col1:
                 if st.button("7 days ago", key="date_7d", help="Set start date to 7 days ago"):
                     st.session_state.fetch_start_date = datetime.now().date() - timedelta(days=7)
+                    st.session_state.fetch_end_date = datetime.now().date() - timedelta(days=1)
                     st.rerun()
             with shortcut_col2:
                 if st.button("1 month ago", key="date_1m", help="Set start date to 1 month ago"):
                     st.session_state.fetch_start_date = datetime.now().date() - timedelta(days=30)
+                    st.session_state.fetch_end_date = datetime.now().date() - timedelta(days=1)
                     st.rerun()
             with shortcut_col3:
                 if st.button("1 year ago", key="date_1y", help="Set start date to 1 year ago"):
                     st.session_state.fetch_start_date = datetime.now().date() - timedelta(days=365)
+                    st.session_state.fetch_end_date = datetime.now().date() - timedelta(days=1)
                     st.rerun()
             with shortcut_col4:
                 if st.button("Today", key="date_today", help="Set end date to today (API uses yesterday as max)"):
                     # API doesn't allow future dates, use yesterday as max
                     st.session_state.fetch_end_date = datetime.now().date() - timedelta(days=1)
+                    st.session_state.fetch_start_date = None
                     st.rerun()
             with shortcut_col5:
                 if st.button("Clear dates", key="date_clear", help="Clear both dates"):
