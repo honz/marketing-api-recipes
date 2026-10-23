@@ -1145,6 +1145,7 @@ def create_ad(
     ad_set_id: str,
     creative_id: str,
     app_id: Optional[str] = None,
+    pixel_id: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Create ad.
@@ -1156,6 +1157,7 @@ def create_ad(
         ad_set_id: Ad set ID
         creative_id: Creative ID
         app_id: App ID for app events tracking (optional)
+        pixel_id: Pixel ID for web conversion tracking (optional)
 
     Returns:
         Tuple of (Ad ID or None, Error message or None)
@@ -1172,14 +1174,24 @@ def create_ad(
         "creative": json.dumps({"creative_id": creative_id}),
     }
 
-    # Add tracking_specs for app events if app_id is provided
+    # Add tracking_specs for app events and/or pixel web conversions
+    tracking_specs = []
     if app_id:
-        params["tracking_specs"] = json.dumps([
+        tracking_specs.append(
             {
                 "action.type": "app_custom_event",
                 "application": app_id
             }
-        ])
+        )
+    if pixel_id:
+        tracking_specs.append(
+            {
+                "action.type": ["offsite_conversion"],
+                "fb_pixel": [pixel_id]
+            }
+        )
+    if tracking_specs:
+        params["tracking_specs"] = json.dumps(tracking_specs)
     try:
         response = requests.post(url, headers=headers, params=params, verify=get_ssl_verify_from_env())
         response_data = response.json()
@@ -1428,6 +1440,7 @@ def create_partnership_ads_from_csv(
             link = (row.get("link", "") or "").strip()
             app_link = (row.get("app_link", "") or "").strip()
             app_id = (row.get("app_id", "") or "").strip()
+            pixel_id = (row.get("pixel_id", "") or "").strip()
             applink_treatment = (row.get("applink_treatment", "") or "").strip()
             if applink_treatment:
                 applink_treatment = applink_treatment.lower()
@@ -1695,6 +1708,7 @@ def create_partnership_ads_from_csv(
                 published_ad_id, ad_error = create_ad(
                     access_token, ad_account_id, ad_name, ad_set_id, creative_id,
                     app_id if app_id else None,
+                    pixel_id if pixel_id else None,
                 )
 
                 if not published_ad_id:

@@ -2103,6 +2103,72 @@ class TestCreateAd:
         assert tracking_specs[0]["application"] == "app_456"
 
     @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_ad_with_pixel_id_includes_tracking_specs(
+        self, mock_post, mock_access_token, mock_ad_account_id
+    ):
+        """Test that create_ad with pixel_id includes offsite_conversion tracking_specs"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "ad_123"}
+        mock_post.return_value = mock_response
+
+        ad_id, error = partnership_ads_booster.create_ad(
+            mock_access_token,
+            mock_ad_account_id,
+            "Test Ad",
+            "adset_123",
+            "creative_123",
+            pixel_id="pixel_789",
+        )
+
+        assert ad_id == "ad_123"
+        assert error is None
+
+        # Verify tracking_specs is in the params with correct structure
+        call_args = mock_post.call_args
+        params = call_args.kwargs.get("params", {})
+        assert "tracking_specs" in params
+
+        tracking_specs = json.loads(params["tracking_specs"])
+        assert len(tracking_specs) == 1
+        assert tracking_specs[0]["action.type"] == ["offsite_conversion"]
+        assert tracking_specs[0]["fb_pixel"] == ["pixel_789"]
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
+    def test_create_ad_with_app_id_and_pixel_id_includes_both_specs(
+        self, mock_post, mock_access_token, mock_ad_account_id
+    ):
+        """Test that create_ad with both app_id and pixel_id includes both tracking specs"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "ad_123"}
+        mock_post.return_value = mock_response
+
+        ad_id, error = partnership_ads_booster.create_ad(
+            mock_access_token,
+            mock_ad_account_id,
+            "Test Ad",
+            "adset_123",
+            "creative_123",
+            app_id="app_456",
+            pixel_id="pixel_789",
+        )
+
+        assert ad_id == "ad_123"
+        assert error is None
+
+        call_args = mock_post.call_args
+        params = call_args.kwargs.get("params", {})
+        assert "tracking_specs" in params
+
+        tracking_specs = json.loads(params["tracking_specs"])
+        assert len(tracking_specs) == 2
+        assert tracking_specs[0]["action.type"] == "app_custom_event"
+        assert tracking_specs[0]["application"] == "app_456"
+        assert tracking_specs[1]["action.type"] == ["offsite_conversion"]
+        assert tracking_specs[1]["fb_pixel"] == ["pixel_789"]
+
+    @patch("stats_for_dashboards.partnership_ads_booster.requests.post")
     def test_create_ad_api_error(
         self, mock_post, mock_access_token, mock_ad_account_id
     ):
@@ -2195,6 +2261,75 @@ class TestCreatePartnershipAdsFromCsv:
         assert mock_creative.call_args.kwargs["applink_treatment"] == "automatic"
         mock_ad.assert_called_once()
         assert mock_ad.call_args.args[-1] is None
+
+    @patch("stats_for_dashboards.partnership_ads_booster.create_ad")
+    @patch("stats_for_dashboards.partnership_ads_booster.create_ad_creative")
+    @patch("stats_for_dashboards.partnership_ads_booster.upload_instagram_video")
+    @patch(
+        "stats_for_dashboards.partnership_ads_booster.fetch_branded_content_advertisable_medias"
+    )
+    def test_create_partnership_ads_passes_pixel_id_to_create_ad(
+        self,
+        mock_fetch,
+        mock_upload,
+        mock_creative,
+        mock_ad,
+        mock_access_token,
+        mock_business_id,
+        mock_ig_account_id,
+        mock_ad_account_id,
+        mock_facebook_page_id,
+        tmp_path,
+    ):
+        """Test that pixel_id from CSV is passed through to create_ad"""
+        input_csv = tmp_path / "input.csv"
+        output_csv = tmp_path / "output.csv"
+        with open(input_csv, "w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(
+                [
+                    "permalink",
+                    "ad_set_id",
+                    "cta_type",
+                    "link",
+                    "ad_name",
+                    "pixel_id",
+                ]
+            )
+            writer.writerow(
+                [
+                    "https://instagram.com/p/abc123",
+                    "adset_123",
+                    "LEARN_MORE",
+                    "https://example.com/product",
+                    "Pixel Test Ad",
+                    "pixel_789",
+                ]
+            )
+
+        mock_fetch.return_value = {
+            "id": "media_123",
+            "has_permission_for_partnership_ad": True,
+            "eligibility_errors": [],
+        }
+        mock_upload.return_value = ("video_123", None)
+        mock_creative.return_value = ("creative_123", None)
+        mock_ad.return_value = ("ad_123", None)
+
+        partnership_ads_booster.create_partnership_ads_from_csv(
+            mock_access_token,
+            mock_business_id,
+            mock_ig_account_id,
+            mock_ad_account_id,
+            mock_facebook_page_id,
+            str(input_csv),
+            str(output_csv),
+        )
+
+        mock_ad.assert_called_once()
+        # create_ad(token, account, name, adset, creative, app_id, pixel_id)
+        assert mock_ad.call_args.args[-2] is None  # app_id empty
+        assert mock_ad.call_args.args[-1] == "pixel_789"
 
     @patch("stats_for_dashboards.partnership_ads_booster.create_ad")
     @patch("stats_for_dashboards.partnership_ads_booster.create_ad_creative")
