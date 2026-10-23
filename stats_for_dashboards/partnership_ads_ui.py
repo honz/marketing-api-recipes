@@ -485,6 +485,7 @@ def main():
             **Optional:**
             - `app_link`: CTA app/universal link. The tool reads the ad set's `promoted_object.omnichannel_object`; for web + app, this link is applied to every supported platform.
             - `app_id`: App ID for app events tracking (optional; unrelated to the web + app creative configuration).
+            - `pixel_id`: Pixel ID for web conversion tracking (optional; added as `offsite_conversion` tracking spec).
             - `applink_treatment`: Optional routing override: `automatic`, `deeplink_with_web_fallback`, `deeplink_with_appstore_fallback`, or `web_only`. Web + app defaults to `deeplink_with_web_fallback`.
             - `product_set_id`: Product set ID
             - `utm_parameters`: UTM parameters in query string format (e.g., `utm_source=instagram&utm_medium=paid`)
